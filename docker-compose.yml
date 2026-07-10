@@ -1,0 +1,39 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: reservation-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: reservation
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 격리 수준을 명시한다. 실험 결과가 서버 기본값에 좌우되면 안 된다.
+      - --transaction-isolation=REPEATABLE-READ
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: reservation-redis
+    environment:
+      - TZ=Asia/Seoul
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  mysql-data:
