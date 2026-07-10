@@ -247,7 +247,7 @@ WHERE id = ? AND remaining > 0;
 
 ## 7. 다음 할 일 (Next Actions)
 
-- [ ] ERD 설계 (Applicant / InterviewSlot / Reservation / IdempotencyKey)
+- [x] ERD 설계 (Applicant / InterviewSlot / Reservation / IdempotencyKey) → `docs/ERD.md`
 - [ ] 시퀀스 다이어그램 (예약 요청 흐름 + 방어 계층)
 - [ ] 1단계 기본 구현 착수 (락 없는 버전)
 - [ ] Gatling 부하 테스트 시뮬레이션 작성

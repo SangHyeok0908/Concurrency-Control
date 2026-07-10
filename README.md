@@ -4,7 +4,7 @@
 
 학부 시절 동아리 지원자 관리 서비스에서 면접 일정을 선착순으로 예약하는 기능을 만든 적이 있습니다. 당시엔 동시성 문제(중복 예약, 정원 초과)를 실제로 겪지 않았지만, 돌이켜보면 언제 터져도 이상하지 않은 코드였습니다. 운이 좋았을 뿐입니다. 이 프로젝트는 그 코드를 **제대로 다시 만드는** 리벤지 프로젝트입니다. 문제를 직접 재현하고, 여러 해결책을 비교 검증하며, 근거를 가지고 최종 방식을 선택하는 과정 전체를 기록합니다.
 
-전체 기획은 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)에 있습니다.
+전체 기획은 [`PROJECT_PLAN.md`](PROJECT_PLAN.md), 데이터 모델은 [`docs/ERD.md`](docs/ERD.md)에 있습니다.
 
 ---
 
@@ -63,7 +63,7 @@ docker compose ps          # 두 컨테이너가 healthy 인지 확인
 
 접속 기본값은 `application.yml`에 맞춰져 있어 컨테이너만 띄우면 그대로 붙습니다. 포트 등을 바꾸려면 환경변수(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`)로 덮어쓰면 됩니다. 실험을 같은 조건에서 다시 돌리려면 `docker compose down -v`로 볼륨까지 초기화합니다.
 
-> ⚠️ 현재는 스키마가 아직 없어 `bootRun`이 정상적으로 뜨지 않습니다(`ddl-auto=validate`). ERD 설계와 스키마 작성이 선행 단계입니다.
+> ⚠️ 현재는 스키마가 아직 없어 `bootRun`이 정상적으로 뜨지 않습니다(`ddl-auto=validate`). ERD 설계는 [`docs/ERD.md`](docs/ERD.md)에 끝났고, DDL 작성이 1단계 구현의 첫 작업입니다.
 
 ---
 
