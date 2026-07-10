@@ -38,7 +38,7 @@
 | ORM | Spring Data JPA |
 | DB | MySQL |
 | 캐시/분산락 | Redis (Redisson) |
-| 부하 테스트 | k6 (또는 nGrinder, JMeter) |
+| 부하 테스트 | Gatling |
 | 배포 | AWS / Railway 등 (선택) |
 
 ---
@@ -133,7 +133,7 @@ WHERE id = ? AND remaining > 0;
 - [ ] Spring Boot + Java + JPA + MySQL로 기본 CRUD 구현
 - [ ] 지원자 등록 / 면접 슬롯 조회 / 선착순 예약 API
 - [ ] **의도적으로 락 없이 구현**
-- [ ] k6로 동시 요청 100~500개 부하 테스트
+- [ ] Gatling으로 동시 요청 100~500개 부하 테스트
 - [ ] **정원 초과 / 중복 예약이 실제로 발생하는 것을 캡처**
       (로그, DB 쿼리 결과, 테스트 리포트 스크린샷)
 
@@ -250,7 +250,7 @@ WHERE id = ? AND remaining > 0;
 - [ ] ERD 설계 (Applicant / InterviewSlot / Reservation / IdempotencyKey)
 - [ ] 시퀀스 다이어그램 (예약 요청 흐름 + 방어 계층)
 - [ ] 1단계 기본 구현 착수 (락 없는 버전)
-- [ ] k6 부하 테스트 스크립트 작성
+- [ ] Gatling 부하 테스트 시뮬레이션 작성
 - [ ] 문제 재현 결과 캡처
 
 ---
