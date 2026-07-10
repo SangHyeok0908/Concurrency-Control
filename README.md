@@ -63,7 +63,17 @@ docker compose ps          # 두 컨테이너가 healthy 인지 확인
 
 접속 기본값은 `application.yml`에 맞춰져 있어 컨테이너만 띄우면 그대로 붙습니다. 포트 등을 바꾸려면 환경변수(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`)로 덮어쓰면 됩니다. 실험을 같은 조건에서 다시 돌리려면 `docker compose down -v`로 볼륨까지 초기화합니다.
 
-> ⚠️ 현재는 스키마가 아직 없어 `bootRun`이 정상적으로 뜨지 않습니다(`ddl-auto=validate`). ERD 설계는 [`docs/ERD.md`](docs/ERD.md)에 끝났고, DDL 작성이 1단계 구현의 첫 작업입니다.
+## 스키마
+
+스키마는 Hibernate가 생성하지 않고(`ddl-auto: validate`) **Flyway 마이그레이션으로 버전 관리**합니다. 방어 수단이 단계별로 하나씩 들어오는 과정 자체가 이 프로젝트의 논지이므로, 그 과정이 마이그레이션 이력에 남아야 하기 때문입니다. 테스트도 동일한 마이그레이션을 사용합니다 — 제약이 실제로 지켜지는지가 곧 측정 대상이라, 테스트가 다른 스키마를 보면 안 됩니다.
+
+| 버전 | 내용 | 단계 |
+|---|---|---|
+| `V1__baseline_schema_without_guards.sql` | applicant / interview_slot / reservation. **방어 제약 없음** | 1단계 |
+| _(예정)_ `V2` | `UNIQUE(applicant_id, slot_id)`, `idempotency_key` 테이블 | 2-1단계 |
+| _(예정)_ `V3` | `interview_slot.version` | 2-2단계 |
+
+테이블 정의와 설계 근거는 [`docs/ERD.md`](docs/ERD.md)에 있습니다.
 
 ---
 
