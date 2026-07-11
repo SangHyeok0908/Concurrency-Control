@@ -30,3 +30,5 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 커밋
 
 커밋 단위 자체가 이 포트폴리오의 평가 항목이다(`PROJECT_PLAN.md` 5장). 한 번에 몰아서 커밋하지 말고 작고 의미 있는 단위로 나눌 것.
+
+**커밋은 절대 자동으로 찍지 말 것.** 작업(코드 작성, 테스트, 수정)은 진행하되, `git commit`은 반드시 사용자에게 먼저 물어보고 명시적 승인을 받은 뒤에만 실행한다. 커밋 메시지 초안을 보여주고 확인을 받는 것을 기본으로 한다.
