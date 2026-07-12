@@ -12,8 +12,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 1단계 진행 상황
 
-기능 구현(도메인·리포지토리·서비스·REST API)과 baseline 오버부킹 재현이 끝났다. 재현 결과, 간헐성의
-원인, 데드락(FK의 S잠금 ↔ UPDATE의 X잠금 승격 충돌) 분석은 [docs/STEP1-BASELINE-OVERBOOKING.md](docs/STEP1-BASELINE-OVERBOOKING.md)에 정리돼 있다. **남은 1단계 작업은 Gatling HTTP 부하 테스트**(처리량·응답시간·실패율 측정, 2단계 before/after 벤치마크의 baseline 수치)다.
+기능 구현(도메인·리포지토리·서비스·REST API), baseline 오버부킹 재현, **Gatling HTTP 부하 테스트**가
+모두 끝났다 — **1단계 완료.** 서비스-계층 재현(간헐성 원인, FK S→X 승격 데드락)은
+[docs/STEP1-BASELINE-OVERBOOKING.md](docs/STEP1-BASELINE-OVERBOOKING.md)에, HTTP 부하 결과(오버부킹
++ lost update 카운터 붕괴 + 데드락 폭증, TPS·응답시간·실패율 기준선)는
+[docs/STEP1-GATLING-LOADTEST.md](docs/STEP1-GATLING-LOADTEST.md)에 정리돼 있다. 부하 시뮬레이션은
+`src/gatling/java`의 `BaselineReservationSimulation`이며 `./gradlew gatlingRun`으로 돌린다(앱이 `:8080`에
+떠 있어야 함). **다음은 2단계 방어 도입**(UNIQUE → 조건부 UPDATE → 멱등성 키 → 락)이며, 같은
+시뮬레이션으로 before/after를 비교한다.
 
 동시성 통합 테스트 `BaselineOverbookingProbeTest`는 **의도적으로 "간헐 재현 프로브"** 다. 실제 MySQL은
 트랜잭션이 빨라 오버부킹이 매번 터지지 않으므로, 단언은 신뢰 가능한 불변식(확정 예약 ≥ 정원)에만 걸고
@@ -35,6 +41,8 @@ docker compose up -d     # MySQL(:3306)·Redis(:6379) 기동 — bootRun/부하 
 ./gradlew build          # 컴파일 + 테스트 (PowerShell/cmd에서는 gradlew.bat)
 ./gradlew test           # 테스트만 — Testcontainers가 MySQL을 띄우므로 Docker 데몬이 켜져 있어야 한다
 ./gradlew bootRun        # 앱 실행(:8080) — 위 docker compose 기동이 선행되어야 한다
+./gradlew gatlingRun     # HTTP 부하 테스트 — bootRun으로 앱이 :8080에 떠 있어야 한다
+                         #   오버라이드: -Dcapacity=1 -Dcontenders=200 -DbaseUrl=http://localhost:8080
 ./gradlew test --tests 'com.interview.reservation.ReservationApplicationTests'  # 단일 클래스
 ```
 
