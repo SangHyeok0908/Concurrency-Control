@@ -21,6 +21,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 떠 있어야 함). **다음은 2단계 방어 도입**(UNIQUE → 조건부 UPDATE → 멱등성 키 → 락)이며, 같은
 시뮬레이션으로 before/after를 비교한다.
 
+**2·3단계 작업 진입점 — [docs/STEP2-3-BRANCH-STRATEGY.md](docs/STEP2-3-BRANCH-STRATEGY.md).**
+방어 하나당 브랜치 하나(`step2/...`)로 진행하며, 각 브랜치를 **새 세션(새 컨텍스트)에서** 작업한다.
+새 세션을 열면 이 CLAUDE.md가 자동 로드되므로, 위 전략 문서를 읽고 해당 브랜치 항목(①~⑧)만 따르면 된다.
+현재 다음 작업 브랜치: **① `step2/unique-constraint`** (완료할 때마다 이 줄을 다음 항목으로 갱신).
+
 동시성 통합 테스트 `BaselineOverbookingProbeTest`는 **의도적으로 "간헐 재현 프로브"** 다. 실제 MySQL은
 트랜잭션이 빨라 오버부킹이 매번 터지지 않으므로, 단언은 신뢰 가능한 불변식(확정 예약 ≥ 정원)에만 걸고
 오버부킹 발생은 로그로 남긴다. 이 테스트를 "무조건 터진다"로 강화하거나 락으로 '고치지' 말 것 — 최악
