@@ -2,6 +2,12 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '3.5.16'
 	id 'io.spring.dependency-management' version '1.1.7'
+	// 1단계 HTTP 부하 테스트. 별도 `gatling` 소스셋(src/gatling/java)과 gatlingRun 태스크를
+	// 만든다. baseline은 측정만 하고 고치지 않으므로 측정 코드는 이 소스셋에만 둔다.
+	// 3.13.x로 고정하는 이유: Spring Boot 3.5.16 BOM이 Netty를 4.1로 못박는데, Gatling은 3.14부터
+	// Netty 4.2로 올라가 BOM과 충돌한다(gatlingRun이 NoClassDefFoundError로 죽음). 3.13 라인은
+	// 아직 Netty 4.1이라 BOM과 그대로 정렬돼 별도 의존성 조정이 필요 없다. Java 21·Java DSL 모두 지원.
+	id 'io.gatling.gradle' version '3.13.5.4'
 }
 
 group = 'com.interview'
