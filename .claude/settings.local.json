@@ -5,7 +5,9 @@
       "PowerShell($ErrorActionPreference='SilentlyContinue'; \"JAVA_HOME=$env:JAVA_HOME\"; \\(Get-Command java\\).Source; \\(Get-Command javac\\).Source; \\(Get-Command gradle\\).Source; \\(Get-Command docker\\).Source; \"--- scan ---\"; Get-ChildItem 'C:\\\\Program Files\\\\Java','C:\\\\Program Files\\\\Eclipse Adoptium','C:\\\\Program Files\\\\Microsoft','C:\\\\Users\\\\SSAFY\\\\.jdks' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)",
       "Bash(docker info *)",
       "Bash(./gradlew test *)",
-      "Bash(sh gradlew test)"
+      "Bash(sh gradlew test)",
+      "Bash(claude mcp *)",
+      "Bash(gh auth *)"
     ]
   }
 }
