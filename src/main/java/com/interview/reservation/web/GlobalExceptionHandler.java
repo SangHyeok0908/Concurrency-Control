@@ -1,5 +1,6 @@
 package com.interview.reservation.web;
 
+import com.interview.reservation.exception.DuplicateReservationException;
 import com.interview.reservation.exception.NotFoundException;
 import com.interview.reservation.exception.SlotFullException;
 import java.time.LocalDateTime;
@@ -26,6 +27,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(SlotFullException.class)
     public ResponseEntity<ErrorResponse> handleSlotFull(SlotFullException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ErrorResponse.of(HttpStatus.CONFLICT, e.getMessage()));
+    }
+
+    @ExceptionHandler(DuplicateReservationException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicate(DuplicateReservationException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of(HttpStatus.CONFLICT, e.getMessage()));
     }

@@ -8,6 +8,7 @@ import com.interview.reservation.exception.SlotFullException;
 import com.interview.reservation.repository.ApplicantRepository;
 import com.interview.reservation.repository.InterviewSlotRepository;
 import com.interview.reservation.repository.ReservationRepository;
+import com.interview.reservation.service.strategy.ReservationStrategy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,14 +21,24 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code @Version}, 재시도, {@code synchronized} 를 여기 추가하지 말 것. 그렇게 하면
  * 재현하려는 레이스 컨디션이 사라진다. 방어 수단은 2단계에서 별도 구현으로 도입해 이
  * baseline 과 벤치마크한다. (근거: PROJECT_PLAN.md 4장, CLAUDE.md)
+ *
+ * <p>2단계에서 도입한 {@link ReservationStrategy} 를 <b>직접 구현</b>한다({@code key()="baseline"}).
+ * 즉 이 클래스가 곧 baseline 전략이다 — 별도 어댑터 없이 {@code /api/reservations/baseline} 로도
+ * 라우팅되고, 방어 전략들과 나란히 벤치마크된다. 기존 {@code POST /api/reservations} 경로와
+ * {@code BaselineOverbookingProbeTest} 는 이 클래스를 그대로 쓴다.
  */
 @Service
 @RequiredArgsConstructor
-public class ReservationService {
+public class ReservationService implements ReservationStrategy {
 
     private final ApplicantRepository applicantRepository;
     private final InterviewSlotRepository slotRepository;
     private final ReservationRepository reservationRepository;
+
+    @Override
+    public String key() {
+        return "baseline";
+    }
 
     /**
      * 선착순 예약. 아래 흐름의 read → check → decrease 사이에는 아무런 동시성 제어가 없다.
@@ -44,6 +55,7 @@ public class ReservationService {
      * {@code remaining = remaining - 1} 이 아니라 {@code remaining = <읽은 값 - 1>} 이므로
      * lost update 도 함께 발생한다.
      */
+    @Override
     @Transactional
     public Reservation reserve(Long applicantId, Long slotId) {
         Applicant applicant = applicantRepository.findById(applicantId)
