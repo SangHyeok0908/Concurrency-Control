@@ -50,4 +50,15 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	// 포크된 테스트 JVM은 daemon의 -Duser.timezone을 물려받지 않으므로 명시한다.
+	systemProperty 'user.timezone', 'Asia/Seoul'
+}
+
+tasks.named('bootRun') {
+	systemProperty 'user.timezone', 'Asia/Seoul'
+}
+
+// gatlingRun이 포크하는 JVM에도 같은 이유로 명시해야 시뮬레이션 로그가 한국 시간으로 찍힌다.
+gatling {
+	systemProperties = ['user.timezone': 'Asia/Seoul']
 }
