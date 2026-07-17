@@ -1,7 +1,7 @@
 # 2·3단계 브랜치 전략 (선착순 예약 동시성 제어 포트폴리오)
 
 > **새 세션에서 브랜치 하나를 작업할 때 이 문서를 정본으로 삼는다.**
-> 시작 멘트 예시: `step2/idempotency-key 브랜치 작업 시작. docs/STEP2-3-BRANCH-STRATEGY.md의 ③을 따른다.`
+> 시작 멘트 예시: `step2/pessimistic-lock 브랜치 작업 시작. docs/STEP2-3-BRANCH-STRATEGY.md의 ④를 따른다.`
 > 각 브랜치의 세부 구현은 그 브랜치 진입 시점에 별도로 설계한다.
 
 ## 진행 상황 (이 표가 2·3단계 진행의 정본)
@@ -13,8 +13,8 @@
 |---|---|---|---|
 | ① | `step2/unique-constraint` | ✅ 완료 (2026-07-13, PR #2) | [STEP2-UNIQUE-CONSTRAINT.md](STEP2-UNIQUE-CONSTRAINT.md) · `V2` |
 | ② | `step2/conditional-update` | ✅ 완료 (2026-07-13, PR #3) | [STEP2-CONDITIONAL-UPDATE.md](STEP2-CONDITIONAL-UPDATE.md) |
-| ③ | `step2/idempotency-key` | ⏳ **다음 작업** | — |
-| ④ | `step2/pessimistic-lock` | ⬜ 예정 | — |
+| ③ | ~~`step2/idempotency-key`~~ | ❌ **생략** (2026-07-17, [근거](#skip-idempotency-key)) | — |
+| ④ | `step2/pessimistic-lock` | ⏳ **다음 작업** | — |
 | ⑤ | `step2/optimistic-lock` | ⬜ 예정 | — |
 | ⑥ | `step2/distributed-lock` | ⬜ 예정 | — |
 | ⑦ | `step2/benchmark` | ⬜ 예정 | `docs/STEP2-DEFENSE-BENCHMARK.md` |
@@ -74,13 +74,37 @@
 - 테스트: 동시 경쟁에서 확정 예약 수 == capacity (오버부킹 0)
 - 문서: 락/데드락 없이 원자적 연산 하나로 오버부킹이 사라짐을 baseline과 대비
 
-**③ `step2/idempotency-key`** — 같은 사용자의 중복 요청(더블클릭/재시도)
-- 권장: Redis `SETNX` + TTL (Redis 이미 스택에 있음 → 마이그레이션 불필요).
-  대안으로 요청 ID 저장 테이블(`V3`)도 가능 — 채택 시 이후 마이그레이션 번호가 밀림
-- 동일 키 재요청 시 기존 결과 반환, 첫 요청 처리 중 재요청 처리 방식 결정
-- 테스트: 같은 멱등성 키로 두 번 요청해도 예약은 1건
-- 문서: **멱등성 키(요청 중복) ≠ 조건부 UPDATE/락(데이터 레이스)** 구분을 명시 —
-  락은 중복 요청을 못 막는다는 점이 포트폴리오 핵심 논거
+<a id="skip-idempotency-key"></a>
+#### ③ (생략) `step2/idempotency-key` — 왜 하지 않는가
+
+**결정(2026-07-17): 구현하지 않는다.** 계획서 3장은 멱등성 키를 방어 3순위로 올려놨지만,
+①을 끝내고 나서 다시 따져 보니 **이 도메인에서는 명분이 서지 않는다.** 근거는 두 가지다.
+
+**1. 자연 키가 이미 멱등성 키다.** 멱등성 키가 실무에서 꼭 필요한 연산(결제·송금)은 요청 내용만으로
+"같은 요청"인지 판별할 수 없다 — 5만원 송금 두 번은 정당한 두 건일 수 있으니, 클라이언트가 별도 키를
+발급해 "이건 아까 그 요청"이라고 알려줘야 한다. 반면 예약은 **(지원자, 슬롯) 쌍 자체가 요청의 정체성**이다.
+같은 쌍의 두 번째 요청은 정의상 언제나 중복이다. 별도 키를 발급받을 이유가 없고, 그 자연 키에는 이미
+①에서 `UNIQUE(applicant_id, slot_id)`가 걸려 있다.
+
+**2. 원래의 명분은 ①에서 이미 소진됐다.** 계획서가 내세운 논거는 "락 3종만으로는 중복 요청을 못 막는다"였다.
+맞는 말이지만 그 공백을 메운 것은 멱등성 키가 아니라 **UNIQUE 제약**이었다 —
+[STEP2-UNIQUE-CONSTRAINT.md](STEP2-UNIQUE-CONSTRAINT.md)의 "동시 중복 20건 → 예약 행 정확히 1건"이
+그 증거다. 여기에 Redis `SETNX`를 더 얹으면 포트폴리오의 논지("가장 단순한 도구에서 시작해, 부족해지는
+지점에서만 무거운 도구를 꺼냈다")를 **스스로 배반한다.** 자연 키로 충분한 자리에 인프라를 하나 더
+끌어오는 셈이기 때문이다. 생략 자체가 그 논지의 실천이다.
+
+**남는 빈틈과 그 크기.** UNIQUE는 두 번째 INSERT를 *거부*할 뿐, 응답을 못 받고 재시도한 클라이언트에게
+원래 결과를 돌려주지 않는다. 그 사용자는 실제로 예약에 성공했는데 409를 받는다 — 엄밀히는 틀린 응답이고,
+정확한 응답은 `200 + 기존 예약`이다. 다만 이건 **동시성 문제가 아니라 API 응답 설계 문제**이고,
+`DataIntegrityViolationException`을 잡은 자리에서 기존 예약을 조회해 반환하면 끝나는 몇 줄짜리 개선이다.
+멱등성 *키*를 도입할 근거는 못 된다. 필요해지면 ⑧(트레이드오프 분석)에서 다루거나 별도 브랜치로 뺀다.
+
+**경계선(면접 대비).** 이 판단이 뒤집히는 조건은 명확하다 — 예약이 **결제를 동반**하거나(같은 쌍의 재요청이
+카드 승인을 두 번 일으킴), 한 지원자가 **같은 슬롯을 여러 건 예약할 수 있게** 되면(자연 키가 사라짐)
+그때는 클라이언트 발급 키 + `SETNX` + TTL이 필요해진다.
+
+> 이 생략은 계획서 3장(방어 계층 표)과 6장(멱등성 면접 질문)의 전제를 바꾼다. 두 문서 모두
+> "왜 도입했나"가 아니라 **"왜 도입하지 않기로 판단했나"**로 갱신돼 있다.
 
 ### 2-2. 락 3종 비교 (조건부 UPDATE만으로 부족해지는 지점을 보여주는 용도)
 
@@ -89,7 +113,8 @@
 - 테스트: 오버부킹 0. 문서: 다단계 트랜잭션에서의 명시적 락, 데드락/처리량 트레이드오프 관찰
 
 **⑤ `step2/optimistic-lock`** — `@Version` + 재시도(지수 백오프)
-- `V3__add_version_to_slot.sql`(또는 ③에서 테이블 썼다면 `V4`): `interview_slot.version` 추가
+- `V3__add_version_to_slot.sql`: `interview_slot.version` 추가
+  (③을 생략해 마이그레이션이 밀리지 않으므로 `V3`으로 확정)
 - `OptimisticLockException` 시 지수 백오프 재시도. **재시도 횟수 상한 필수**
 - 트러블슈팅 회고 소재: "무한 재시도 → 횟수 제한 + 백오프" (README 5장 3번 항목)
 - 테스트: 오버부킹 0 + 재시도 상한 동작 확인
@@ -119,9 +144,9 @@
 master
  ├─ step2/unique-constraint      (V2)         → PR → master
  ├─ step2/conditional-update     (코드)        → PR → master
- ├─ step2/idempotency-key        (Redis/or V3) → PR → master
+ ├─ (③ step2/idempotency-key — 생략)
  ├─ step2/pessimistic-lock       (코드)        → PR → master
- ├─ step2/optimistic-lock        (V3/V4)       → PR → master
+ ├─ step2/optimistic-lock        (V3)          → PR → master
  ├─ step2/distributed-lock       (Redisson)    → PR → master
  ├─ step2/benchmark              (docs)        → PR → master
  └─ step3/tradeoff-analysis      (docs/README) → PR → master

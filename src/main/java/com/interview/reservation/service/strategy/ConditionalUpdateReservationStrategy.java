@@ -30,8 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 자리를 확정했으니 엔티티 상태를 메모리로 읽어올 이유가 없다).
  *
  * <p><b>이 전략이 다루지 않는 것.</b> 같은 지원자의 중복 <i>예약</i>은 여전히 ①(V2 UNIQUE)이
- * DB 레벨에서 막는다 — 이 전략은 오버부킹만 겨냥한다. 중복 <i>요청</i>의 우아한 처리(멱등성)는
- * ③의 몫이다.
+ * DB 레벨에서 막는다 — 이 전략은 오버부킹만 겨냥한다. 중복 <i>요청</i> 역시 그 UNIQUE 자연 키가
+ * 덮으므로 별도의 멱등성 키는 도입하지 않는다(docs/STEP2-3-BRANCH-STRATEGY.md 의 ③ 참고).
  */
 @Component
 @RequiredArgsConstructor

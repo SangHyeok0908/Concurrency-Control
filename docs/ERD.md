@@ -12,8 +12,6 @@
 erDiagram
     APPLICANT ||--o{ RESERVATION : "예약한다"
     INTERVIEW_SLOT ||--o{ RESERVATION : "예약된다"
-    APPLICANT ||--o{ IDEMPOTENCY_KEY : "요청한다"
-    RESERVATION |o--o| IDEMPOTENCY_KEY : "결과를 참조한다"
 
     APPLICANT {
         bigint id PK
@@ -39,17 +37,12 @@ erDiagram
         varchar(20) status
         datetime created_at
     }
-
-    IDEMPOTENCY_KEY {
-        varchar(64) idempotency_key PK "2-1단계"
-        bigint applicant_id FK
-        varchar(64) request_hash
-        varchar(20) status
-        bigint reservation_id FK
-        datetime created_at
-        datetime expires_at
-    }
 ```
+
+> **`IDEMPOTENCY_KEY` 테이블은 관계도에서 뺐다(2026-07-17).** 최초 설계에는 있었으나 **도입하지 않기로
+> 판단**했다 — 이 도메인은 (지원자, 슬롯) 자연 키가 요청의 정체성을 이미 고정한다. 설계 자체는 미채택
+> 기록으로 [2.4](#idempotency-key-table)에 남겨 뒀다.
+> 판단 근거: [브랜치 전략 ③](STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key).
 
 관계 요약
 
@@ -58,7 +51,10 @@ erDiagram
 | Applicant : Reservation | 1 : N | 한 지원자는 여러 슬롯에 예약할 수 있다 |
 | InterviewSlot : Reservation | 1 : N | 한 슬롯은 `capacity`명까지 예약을 받는다 |
 | Applicant : InterviewSlot | N : M | `Reservation`이 교차 엔티티. 단, **같은 조합은 1건뿐**이어야 한다 (→ 2-1단계 UNIQUE) |
-| Reservation : IdempotencyKey | 0..1 : 0..1 | 완료된 멱등성 키는 자신이 만들어낸 예약을 가리킨다 |
+
+그 UNIQUE 조합 `(applicant_id, slot_id)`는 이 스키마의 **자연 키**이기도 하다. 같은 쌍의 두 번째 요청은
+정의상 언제나 중복이므로, 이 키가 멱등성 키 역할을 겸한다 — 별도의 `idempotency_key` 테이블을
+두지 않기로 한 이유다.
 
 ---
 
@@ -118,7 +114,11 @@ erDiagram
 1단계에는 UNIQUE가 **없다.** 같은 지원자가 같은 슬롯에 두 행을 만드는 중복 예약을 재현해야 하기 때문이다.
 FK는 유지한다 — FK는 참조 무결성 제약이지 동시성 방어 수단이 아니고, 없으면 오히려 실험 데이터가 오염된다.
 
-### 2.4 `idempotency_key` — 멱등성 키 (2-1단계)
+<a id="idempotency-key-table"></a>
+### 2.4 `idempotency_key` — 멱등성 키 (**미채택**)
+
+> **이 테이블은 만들지 않는다.** 아래는 최초 설계 그대로의 기록이며, 마이그레이션도 엔티티도 없다.
+> 왜 접었는지는 이 절 끝의 "미채택 사유"에 있다.
 
 | 컬럼 | 타입 | 제약 |
 |---|---|---|
@@ -140,7 +140,16 @@ FK는 유지한다 — FK는 참조 무결성 제약이지 동시성 방어 수�
 
 > Redis `SETNX` + TTL로 대체 가능하다. 테이블 방식은 예약과 **같은 트랜잭션에 묶을 수 있다**는 것이
 > 결정적 장점이고(Redis는 DB 트랜잭션 롤백과 함께 되돌아가지 않는다), 대신 DB 부하를 더 준다.
-> 2-1단계에서 두 방식을 모두 구현해 비교한다.
+
+**미채택 사유 (2026-07-17).** 위 설계의 핵심은 "PK 충돌 자체가 중복 요청의 판정"이다. 그런데 이 스키마에는
+**이미 그 역할을 하는 키가 있다** — `UNIQUE(applicant_id, slot_id)`. 클라이언트가 UUID를 발급해 요청의
+정체성을 알려줘야 하는 것은 결제·송금처럼 요청 내용만으로 중복 여부를 판별할 수 없는 연산이지만, 예약은
+(지원자, 슬롯) 쌍이 곧 그 요청이다. 같은 판정을 두 번 구현하는 셈이라 테이블도 Redis도 도입하지 않았다.
+`request_hash`·`expires_at`·만료 배치가 통째로 불필요해진다.
+
+남는 빈틈은 하나뿐이고 작다: `COMPLETED` 행에서 이전 결과를 되돌려주는 동작이 없으므로, 응답을 못 받고
+재시도한 클라이언트는 `200 + 기존 예약`이 아니라 `409`를 받는다. 이건 스키마 문제가 아니라 API 응답 설계
+문제다. 전체 근거: [브랜치 전략 ③](STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key).
 
 ---
 
@@ -148,11 +157,11 @@ FK는 유지한다 — FK는 참조 무결성 제약이지 동시성 방어 수�
 
 | 단계 | 스키마 변경 | 막는 문제 |
 |---|---|---|
-| **1** | 위 3개 테이블(멱등성 키 제외), 방어 제약 없음 | — (버그 재현이 목적) |
-| **2-1** | `UNIQUE(applicant_id, slot_id)` 추가 | 중복 예약 |
+| **1** | 위 3개 테이블, 방어 제약 없음 | — (버그 재현이 목적) |
+| **2-1** | `UNIQUE(applicant_id, slot_id)` 추가 (`V2`) | 중복 예약 |
 | **2-1** | (스키마 변경 없음 — 조건부 UPDATE는 쿼리 변경) | 정원 초과 |
-| **2-1** | `idempotency_key` 테이블 신설 | 같은 사용자의 중복 요청 |
-| **2-2** | `interview_slot.version` 추가 | (낙관적 락 실험용) |
+| ~~2-1~~ | ~~`idempotency_key` 테이블 신설~~ — **미채택** | 같은 사용자의 중복 요청 → 위 UNIQUE 자연 키가 대신한다 |
+| **2-2** | `interview_slot.version` 추가 (`V3`) | (낙관적 락 실험용) |
 
 비관적 락(`SELECT ... FOR UPDATE`)과 분산 락(Redisson)은 **스키마를 바꾸지 않는다.**
 전자는 쿼리 힌트, 후자는 DB 바깥이다. 이 사실 자체가 "락은 스키마에 흔적을 남기지 않으므로

@@ -137,7 +137,7 @@ docker compose up -d          # MySQL:3306 / Redis:6379
   HTTP 부하에서 상시로 드러난다"는 성질이다.
 - **데드락은 baseline의 부작용이지 방어가 아니다.** 오히려 정상 거절(409)조차 못 만드는 카운터 붕괴가
   본질 문제다.
-- **2단계 방어**는 `PROJECT_PLAN.md` 3장 순서(UNIQUE → 조건부 UPDATE → 멱등성 키 → 락)로 도입하고,
+- **2단계 방어**는 `PROJECT_PLAN.md` 3장 순서(UNIQUE → 조건부 UPDATE → 락)로 도입하고,
   **이 시뮬레이션을 그대로 재사용**해 동일 부하에서 before/after를 비교한다. 조건부
   UPDATE(`SET remaining = remaining - 1 WHERE remaining > 0`)는 읽기·쓰기를 원자적 한 방으로 합쳐
   오버부킹·lost update·S→X 데드락을 동시에 없앤다.

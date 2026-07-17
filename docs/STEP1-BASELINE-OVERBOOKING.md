@@ -177,6 +177,6 @@ sequenceDiagram
   → **Gatling 부하 테스트**로 보강했다: [STEP1-GATLING-LOADTEST.md](STEP1-GATLING-LOADTEST.md). 예고대로
   HTTP 지연이 경쟁 창을 넓혀, 간헐적이던 오버부킹이 lost update·데드락 폭증과 함께 상시로 드러났다.
 - **수치는 하드웨어·타이밍 의존적.** 절대치가 아니라 "간헐적으로 터진다"는 성질과 그 메커니즘이 요점이다.
-- **다음 단계(2단계) 방어**는 `PROJECT_PLAN.md` 3장 순서(UNIQUE → 조건부 UPDATE → 멱등성 키 → 락)로
+- **다음 단계(2단계) 방어**는 `PROJECT_PLAN.md` 3장 순서(UNIQUE → 조건부 UPDATE → 락)로
   도입한다. 참고로 조건부 UPDATE(`SET remaining=remaining-1 WHERE remaining>0`)는 읽기·쓰기를 원자적
   UPDATE 한 방으로 합쳐, 4절의 경쟁 창과 5절의 S→X 승격 데드락을 **동시에** 없앤다.
