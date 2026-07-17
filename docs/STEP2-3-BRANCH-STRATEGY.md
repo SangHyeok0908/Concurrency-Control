@@ -1,8 +1,24 @@
 # 2·3단계 브랜치 전략 (선착순 예약 동시성 제어 포트폴리오)
 
 > **새 세션에서 브랜치 하나를 작업할 때 이 문서를 정본으로 삼는다.**
-> 시작 멘트 예시: `step2/unique-constraint 브랜치 작업 시작. docs/STEP2-3-BRANCH-STRATEGY.md의 ①을 따른다.`
+> 시작 멘트 예시: `step2/idempotency-key 브랜치 작업 시작. docs/STEP2-3-BRANCH-STRATEGY.md의 ③을 따른다.`
 > 각 브랜치의 세부 구현은 그 브랜치 진입 시점에 별도로 설계한다.
+
+## 진행 상황 (이 표가 2·3단계 진행의 정본)
+
+다른 문서(README·PROJECT_PLAN·CLAUDE.md)는 여기를 가리키기만 한다. 브랜치를 머지할 때
+**이 표만 갱신**한다.
+
+| | 브랜치 | 상태 | 산출물 |
+|---|---|---|---|
+| ① | `step2/unique-constraint` | ✅ 완료 (2026-07-13, PR #2) | [STEP2-UNIQUE-CONSTRAINT.md](STEP2-UNIQUE-CONSTRAINT.md) · `V2` |
+| ② | `step2/conditional-update` | ✅ 완료 (2026-07-13, PR #3) | [STEP2-CONDITIONAL-UPDATE.md](STEP2-CONDITIONAL-UPDATE.md) |
+| ③ | `step2/idempotency-key` | ⏳ **다음 작업** | — |
+| ④ | `step2/pessimistic-lock` | ⬜ 예정 | — |
+| ⑤ | `step2/optimistic-lock` | ⬜ 예정 | — |
+| ⑥ | `step2/distributed-lock` | ⬜ 예정 | — |
+| ⑦ | `step2/benchmark` | ⬜ 예정 | `docs/STEP2-DEFENSE-BENCHMARK.md` |
+| ⑧ | `step3/tradeoff-analysis` | ⬜ 예정 | README 트레이드오프 섹션 |
 
 ## Context
 

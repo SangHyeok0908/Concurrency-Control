@@ -10,23 +10,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **이 사실은 여기서 코드를 고치는 방식에 직접적인 제약을 건다.** 1단계는 **의도적으로 락 없이** 작성한다. 그래야 레이스 컨디션을 재현하고 캡처할 수 있다. 정확성을 명분으로 1단계 코드에 락, `synchronized`, 뮤텍스 용도의 트랜잭션, `UNIQUE` 제약, 재시도 로직을 추가하지 말 것. 그렇게 하면 이 프로젝트가 만들어내려는 증거물 자체가 사라진다. 레이스처럼 보이는 코드를 발견하면, "고치기" 전에 그 코드가 몇 단계에 속하는지 먼저 확인할 것.
 
-## 1단계 진행 상황
+## 진행 상황과 작업 진입점
 
-기능 구현(도메인·리포지토리·서비스·REST API), baseline 오버부킹 재현, **Gatling HTTP 부하 테스트**가
-모두 끝났다 — **1단계 완료.** 서비스-계층 재현(간헐성 원인, FK S→X 승격 데드락)은
-[docs/STEP1-BASELINE-OVERBOOKING.md](docs/STEP1-BASELINE-OVERBOOKING.md)에, HTTP 부하 결과(오버부킹
-+ lost update 카운터 붕괴 + 데드락 폭증, TPS·응답시간·실패율 기준선)는
-[docs/STEP1-GATLING-LOADTEST.md](docs/STEP1-GATLING-LOADTEST.md)에 정리돼 있다. 부하 시뮬레이션은
-`src/gatling/java`의 `BaselineReservationSimulation`이며 `./gradlew gatlingRun`으로 돌린다(앱이 `:8080`에
-떠 있어야 함). **다음은 2단계 방어 도입**(UNIQUE → 조건부 UPDATE → 멱등성 키 → 락)이며, 같은
-시뮬레이션으로 before/after를 비교한다.
+**진행 상황의 정본은 [docs/STEP2-3-BRANCH-STRATEGY.md](docs/STEP2-3-BRANCH-STRATEGY.md)의 진행 상황
+표다. 여기에 진행 상황을 옮겨 적지 말 것** — 브랜치를 머지할 때 그 표 한 곳만 갱신한다.
 
-**2·3단계 작업 진입점 — [docs/STEP2-3-BRANCH-STRATEGY.md](docs/STEP2-3-BRANCH-STRATEGY.md).**
-방어 하나당 브랜치 하나(`step2/...`)로 진행하며, 각 브랜치를 **새 세션(새 컨텍스트)에서** 작업한다.
-새 세션을 열면 이 CLAUDE.md가 자동 로드되므로, 위 전략 문서를 읽고 해당 브랜치 항목(①~⑧)만 따르면 된다.
-현재 다음 작업 브랜치: **③ `step2/idempotency-key`** (완료할 때마다 이 줄을 다음 항목으로 갱신).
-①(`step2/unique-constraint`)은 구현 완료 — [docs/STEP2-UNIQUE-CONSTRAINT.md](docs/STEP2-UNIQUE-CONSTRAINT.md).
-②(`step2/conditional-update`)은 구현 완료 — [docs/STEP2-CONDITIONAL-UPDATE.md](docs/STEP2-CONDITIONAL-UPDATE.md).
+1단계(락 없는 baseline + 오버부킹 재현 + Gatling 기준선)는 완료됐다. 재현 근거는
+[docs/STEP1-BASELINE-OVERBOOKING.md](docs/STEP1-BASELINE-OVERBOOKING.md)(서비스 계층, 간헐성·데드락)와
+[docs/STEP1-GATLING-LOADTEST.md](docs/STEP1-GATLING-LOADTEST.md)(HTTP 부하, 성능 기준선)에 있다.
+부하 시뮬레이션은 `src/gatling/java`의 `BaselineReservationSimulation`이다.
+
+2·3단계는 **방어 하나당 브랜치 하나**(`step2/...`)로 진행하며, 각 브랜치를 **새 세션(새 컨텍스트)에서**
+작업한다. 새 세션에서는 위 전략 문서의 진행 상황 표에서 다음 브랜치를 확인하고 해당 항목(①~⑧)만 따르면 된다.
 
 동시성 통합 테스트 `BaselineOverbookingProbeTest`는 **의도적으로 "간헐 재현 프로브"** 다. 실제 MySQL은
 트랜잭션이 빨라 오버부킹이 매번 터지지 않으므로, 단언은 신뢰 가능한 불변식(확정 예약 ≥ 정원)에만 걸고

@@ -88,6 +88,9 @@ baseline 오버부킹 프로브는 "간헐적으로만" 터져 관찰만 했지�
 | `POST /api/reservations/nope` (미지원 전략) | `404` — `알 수 없는 예약 전략입니다: nope (사용 가능: [unique, baseline])` |
 | `POST /api/reservations` (레거시 baseline) | `201` — 동작 불변 |
 
+> 위 `사용 가능` 목록은 **① 시점의 캡처**다. 등록된 전략에서 동적으로 만들어지는 메시지라 방어가
+> 추가될수록 늘어난다(② 이후 `conditional` 포함).
+
 > **운영 메모.** V2는 append-only 마이그레이션이라, 이미 중복 (지원자, 슬롯) 행이 있는 DB에서는
 > `ALTER TABLE ... ADD UNIQUE`가 실패한다. 실제로 step1 부하 테스트 잔여 데이터가 남은 로컬 DB에서
 > 이 마이그레이션이 `Duplicate entry` 로 실패했고, DB를 초기화해 재적용했다. 운영이라면 제약 추가 전

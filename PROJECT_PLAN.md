@@ -4,7 +4,9 @@
 > 이후 대화에서 이 파일을 첨부하면 맥락을 이어서 작업할 수 있습니다.
 >
 > - **최초 작성일**: 2026-07-09
-> - **문서 상태**: 기획 확정, 개발 착수 전
+> - **문서 상태**: 1단계 완료, 2단계 진행 중
+> - **진행 상황 정본**: [`docs/STEP2-3-BRANCH-STRATEGY.md`](docs/STEP2-3-BRANCH-STRATEGY.md)
+>   — 이 기획서는 *무엇을 왜 하는가*의 정본이고, *어디까지 됐는가*는 그쪽 표를 본다.
 
 ---
 
@@ -128,24 +130,30 @@ WHERE id = ? AND remaining > 0;
 
 ## 4. 단계별 개발 계획
 
-### 1단계: 기본 기능 + 문제 재현 (약 1주)
-- [ ] 도메인 설계: 지원자(Applicant), 면접 슬롯(InterviewSlot, 정원 N명), 예약(Reservation)
-- [ ] Spring Boot + Java + JPA + MySQL로 기본 CRUD 구현
-- [ ] 지원자 등록 / 면접 슬롯 조회 / 선착순 예약 API
-- [ ] **의도적으로 락 없이 구현**
-- [ ] Gatling으로 동시 요청 100~500개 부하 테스트
-- [ ] **정원 초과 / 중복 예약이 실제로 발생하는 것을 캡처**
-      (로그, DB 쿼리 결과, 테스트 리포트 스크린샷)
+### 1단계: 기본 기능 + 문제 재현 (약 1주) — ✅ 완료
+
+- [x] 도메인 설계: 지원자(Applicant), 면접 슬롯(InterviewSlot, 정원 N명), 예약(Reservation)
+- [x] Spring Boot + Java + JPA + MySQL로 기본 CRUD 구현
+- [x] 지원자 등록 / 면접 슬롯 조회 / 선착순 예약 API
+- [x] **의도적으로 락 없이 구현**
+- [x] Gatling으로 동시 요청 100~500개 부하 테스트
+- [x] **정원 초과 / 중복 예약이 실제로 발생하는 것을 캡처**
+      → [서비스 계층 재현](docs/STEP1-BASELINE-OVERBOOKING.md) · [HTTP 부하](docs/STEP1-GATLING-LOADTEST.md)
 
 > 산출물: "그때는 몰랐던 문제를 이번엔 직접 눈으로 확인했다"는 증거
 
 ---
 
-### 2단계: 방어 수단 구현 및 비교 (약 2주)
+### 2단계: 방어 수단 구현 및 비교 (약 2주) — 진행 중
+
+> 방어 하나 = 브랜치 하나 = PR 하나. 브랜치별 현재 상태는
+> [`docs/STEP2-3-BRANCH-STRATEGY.md`](docs/STEP2-3-BRANCH-STRATEGY.md)의 진행 상황 표가 정본이다.
 
 **2-1. 가벼운 해법부터**
-- [ ] `UNIQUE(user_id, slot_id)` 제약 추가 → 중복 예약 차단
-- [ ] 조건부 UPDATE (`WHERE remaining > 0`) → 오버부킹 방지
+- [x] `UNIQUE(user_id, slot_id)` 제약 추가 → 중복 예약 차단
+      ([근거](docs/STEP2-UNIQUE-CONSTRAINT.md))
+- [x] 조건부 UPDATE (`WHERE remaining > 0`) → 오버부킹 방지
+      ([근거](docs/STEP2-CONDITIONAL-UPDATE.md))
 - [ ] 멱등성 키 도입
       - Redis `SETNX` + TTL, 또는 요청 ID 저장 테이블
       - 동일 키 재요청 시 기존 결과 반환
@@ -247,11 +255,13 @@ WHERE id = ? AND remaining > 0;
 
 ## 7. 다음 할 일 (Next Actions)
 
+다음에 무슨 브랜치를 파는지는 [`docs/STEP2-3-BRANCH-STRATEGY.md`](docs/STEP2-3-BRANCH-STRATEGY.md)의
+진행 상황 표를 본다 — 여기 목록을 따로 두면 반드시 어긋나므로 중복해 적지 않는다.
+
+기획 단계에서 남은 것(브랜치에 속하지 않는 항목)만 여기 둔다.
+
 - [x] ERD 설계 (Applicant / InterviewSlot / Reservation / IdempotencyKey) → `docs/ERD.md`
-- [ ] 시퀀스 다이어그램 (예약 요청 흐름 + 방어 계층)
-- [ ] 1단계 기본 구현 착수 (락 없는 버전)
-- [ ] Gatling 부하 테스트 시뮬레이션 작성
-- [ ] 문제 재현 결과 캡처
+- [ ] 시퀀스 다이어그램 (예약 요청 흐름 + 방어 계층) — README 아키텍처 다이어그램 섹션과 함께 작성
 
 ---
 
