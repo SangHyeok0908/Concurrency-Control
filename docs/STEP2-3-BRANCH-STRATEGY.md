@@ -14,8 +14,8 @@
 | ① | `step2/unique-constraint` | ✅ 완료 (2026-07-13, PR #2) | [STEP2-UNIQUE-CONSTRAINT.md](STEP2-UNIQUE-CONSTRAINT.md) · `V2` |
 | ② | `step2/conditional-update` | ✅ 완료 (2026-07-13, PR #3) | [STEP2-CONDITIONAL-UPDATE.md](STEP2-CONDITIONAL-UPDATE.md) |
 | ③ | ~~`step2/idempotency-key`~~ | ❌ **생략** (2026-07-17, [근거](#skip-idempotency-key)) | — |
-| ④ | `step2/pessimistic-lock` | ⏳ **다음 작업** | — |
-| ⑤ | `step2/optimistic-lock` | ⬜ 예정 | — |
+| ④ | `step2/pessimistic-lock` | ✅ 완료 (2026-07-18, PR #4) | [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md) |
+| ⑤ | `step2/optimistic-lock` | ⏳ **다음 작업** | — |
 | ⑥ | `step2/distributed-lock` | ⬜ 예정 | — |
 | ⑦ | `step2/benchmark` | ⬜ 예정 | `docs/STEP2-DEFENSE-BENCHMARK.md` |
 | ⑧ | `step3/tradeoff-analysis` | ⬜ 예정 | README 트레이드오프 섹션 |
@@ -137,6 +137,8 @@
 - 테스트: 오버부킹 0. 문서: 다단계 트랜잭션에서의 명시적 락, 데드락/처리량 트레이드오프 관찰
 - 위 고정 포맷 3문장 필수. 이기는 조건(경합이 높고 임계 구역이 다단계라 재시도 비용이 큰 경우)을
   명시하되, 이 도메인의 임계 구역은 UPDATE 한 방이라 그 조건이 성립하지 않음을 적는다
+- **결과(2026-07-18):** 오버부킹 0 달성, 그러나 정합성이 ②와 동률이고 저경합에서 더 느려
+  **채택하지 않는다.** 근거는 [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md)
 
 **⑤ `step2/optimistic-lock`** — `@Version` + 재시도(지수 백오프)
 - `V3__add_version_to_slot.sql`: `interview_slot.version` 추가
@@ -159,7 +161,14 @@
 
 **⑦ `step2/benchmark`** — before/after 정량화
 - `BaselineReservationSimulation`을 재사용/파라미터화해 baseline·①~⑥ 각 전략에 동일 부하 인가
+  - ④에서 이미 `-Dstrategy`(경로 선택)와 **요청 이름 이름표**(`reserve [전략 cap=N cont=M]`)를
+    넣어 뒀다. 이름표는 `js/stats.js`에 실리므로 리포트를 기계적으로 파싱해 표를 만들 수 있다 —
+    이게 없으면 쌓인 리포트가 어느 전략의 측정인지 사후에 알 수 없다(④에서 실제로 겪은 문제)
 - 지표: TPS, 평균/최대 응답시간, 실패율, 데이터 정합성(오버부킹·중복 수)
+- **②의 거절 경로 최적화 여지 확인 필요.** ④에서 쿼리 수를 재보니 거절 경로가 ② 3개 / ④ 2개로
+  ②가 더 든다 — 만석과 없는 슬롯을 구분하려는 `existsById` 때문이다. 방어가 아니라 404/409 구분용
+  조회라 제거 가능하며, `capacity=1`처럼 거절이 지배적인 지점의 수치를 왜곡할 수 있다.
+  ②를 고치면 이미 머지된 브랜치의 측정 기준이 바뀌므로 **④에서는 손대지 않았다**([근거](STEP2-PESSIMISTIC-LOCK.md))
 - **경합 강도 축 (2026-07-17 추가, [실험 통제 원칙](#lock-experiment-control)의 실측 근거).**
   시나리오는 그대로 두고 파라미터만 바꿔 **모든 전략을 두 지점에서** 측정한다. 락 3종이 서로 갈라지는
   유일한 실측 근거이므로 생략하지 않는다.
