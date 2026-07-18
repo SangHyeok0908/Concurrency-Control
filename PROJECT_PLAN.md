@@ -165,7 +165,9 @@ WHERE id = ? AND remaining > 0;
       "가벼운 것부터"라는 논지의 실천으로서의 생략 ([근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key))
 
 **2-2. 락 방식 비교 구현**
-- [ ] **비관적 락**: `@Lock(LockModeType.PESSIMISTIC_WRITE)` → `SELECT ... FOR UPDATE`
+- [x] **비관적 락**: `@Lock(LockModeType.PESSIMISTIC_WRITE)` → `SELECT ... FOR UPDATE`
+      오버부킹 0 달성. 다만 정합성이 ②와 동률이고 저경합에서 더 느려 **채택하지 않는다**
+      ([근거](docs/STEP2-PESSIMISTIC-LOCK.md))
 - [ ] **낙관적 락**: `@Version` 컬럼 + 재시도 로직 (지수 백오프)
 - [ ] **분산 락**: Redis + Redisson `RLock`
 
