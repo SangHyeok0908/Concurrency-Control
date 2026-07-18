@@ -29,14 +29,35 @@ import java.time.LocalDateTime;
  * 의도적으로 락이 없으며 여기서 고치지 않는다. 오버부킹은 리포트 통과/실패가 아니라 DB 확정 행 수로
  * 증명하므로 assertion을 걸지 않는다(프로브 테스트와 같은 철학).
  *
+ * <p><b>2단계 확장({@code -Dstrategy}).</b> 시나리오는 그대로 두고 <b>때리는 경로만</b> 바꾼다.
+ * 지정하지 않으면 1단계와 같은 {@code POST /api/reservations}(락 없는 baseline)로, 지정하면
+ * {@code POST /api/reservations/{strategy}}로 나간다. 방어별 before/after 를 <b>같은 부하·같은
+ * 구도</b>로 비교하기 위한 축이며, 락마다 유리한 시나리오를 만들지 않는다는 실험 통제 원칙
+ * (docs/STEP2-3-BRANCH-STRATEGY.md)의 실행 수단이다. 종합 측정은 ⑦ 몫이다.
+ *
  * <p>파라미터는 시스템 프로퍼티로 오버라이드한다. 예:
- * {@code ./gradlew gatlingRun -Dcapacity=1 -Dcontenders=200 -DbaseUrl=http://localhost:8080}
+ * {@code ./gradlew gatlingRun -Dcapacity=1 -Dcontenders=200 -Dstrategy=pessimistic}
  */
 public class BaselineReservationSimulation extends Simulation {
 
     private static final String BASE_URL = System.getProperty("baseUrl", "http://localhost:8080");
     private static final int CAPACITY = Integer.getInteger("capacity", 100);
     private static final int CONTENDERS = Integer.getInteger("contenders", 500);
+
+    /** 빈 값이면 1단계 baseline 경로 그대로 — step1 측정 자산을 훼손하지 않는다. */
+    private static final String STRATEGY = System.getProperty("strategy", "");
+    private static final String RESERVE_PATH =
+            STRATEGY.isBlank() ? "/api/reservations" : "/api/reservations/" + STRATEGY;
+
+    /**
+     * 요청 이름에 <b>실행 조건을 박아 넣는다.</b> Gatling 리포트 디렉터리는 시뮬레이션 클래스명 +
+     * 타임스탬프뿐이고 {@code simulation.log} 에도 URL 경로가 남지 않아, 이름표가 없으면 쌓인
+     * 리포트 중 어느 것이 어느 전략의 측정인지 <b>사후에 알아낼 방법이 없다.</b> 이 이름은
+     * {@code js/stats.js} 에 그대로 실리므로, ⑦ 벤치마크가 리포트를 기계적으로 파싱해
+     * (전략 × 경합 수준) 표를 만들 때 자기 기술적인 키가 된다.
+     */
+    private static final String RESERVE_LABEL = String.format("reserve [%s cap=%d cont=%d]",
+            STRATEGY.isBlank() ? "baseline" : STRATEGY, CAPACITY, CONTENDERS);
 
     /** 반복 실행 시 지원자 이메일 UNIQUE 제약 충돌을 피하려고 런마다 고유한 프리픽스를 쓴다. */
     private static final String RUN_ID = Long.toHexString(System.nanoTime());
@@ -80,8 +101,8 @@ public class BaselineReservationSimulation extends Simulation {
     /** 서로 다른 지원자가 같은 슬롯 하나를 두고 동시에 예약을 시도한다. */
     private final ScenarioBuilder contention = scenario("reservation contention")
             .feed(SeedState.applicantFeeder())
-            .exec(http("reserve")
-                    .post("/api/reservations")
+            .exec(http(RESERVE_LABEL)
+                    .post(RESERVE_PATH)
                     .body(StringBody(session -> String.format(
                             "{\"applicantId\":%d,\"slotId\":%d}",
                             session.getLong("applicantId"), SeedState.SLOT_ID.get())))
