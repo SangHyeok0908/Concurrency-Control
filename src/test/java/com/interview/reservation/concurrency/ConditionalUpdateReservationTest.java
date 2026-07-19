@@ -21,7 +21,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.TestPropertySource;
 
 /**
  * 2-1단계 ②: 원자적 조건부 UPDATE 가 <b>오버부킹을 결정적으로</b> 없앰을 검증한다.
@@ -33,12 +32,6 @@ import org.springframework.test.context.TestPropertySource;
  * 묶어, 락/데드락 없이도 마지막 자리를 정확히 한 요청만 가져가기 때문이다.
  */
 @SpringBootTest
-@TestPropertySource(properties = {
-        // 경쟁자 전원이 동시에 DB 에 닿도록 커넥션 풀을 넉넉히 준다(baseline 프로브와 동일 조건).
-        "spring.datasource.hikari.maximum-pool-size=20",
-        "spring.jpa.properties.hibernate.show_sql=false",
-        "logging.level.org.hibernate.orm.jdbc.bind=OFF"
-})
 class ConditionalUpdateReservationTest extends AbstractIntegrationTest {
 
     private static final int CAPACITY = 1;

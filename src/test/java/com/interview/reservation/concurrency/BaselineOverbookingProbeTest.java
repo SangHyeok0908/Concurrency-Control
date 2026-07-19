@@ -20,7 +20,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.TestPropertySource;
 
 /**
  * 1단계 baseline 이 <b>실제로, 그러나 간헐적으로</b> 오버부킹한다는 것을 보이는 실험이다.
@@ -40,13 +39,6 @@ import org.springframework.test.context.TestPropertySource;
  * 강제 재현이 필요한 결정적 검증은 2단계에서 방어를 붙인 뒤 최악-인터리빙 회귀 테스트로 한다.
  */
 @SpringBootTest
-@TestPropertySource(properties = {
-        // 경쟁자 전원이 동시에 DB 에 닿을 수 있도록 커넥션 풀을 넉넉히 준다.
-        "spring.datasource.hikari.maximum-pool-size=20",
-        // 실측 로그가 SQL/바인딩 추적에 묻히지 않도록 이 테스트에서만 조용히 한다.
-        "spring.jpa.properties.hibernate.show_sql=false",
-        "logging.level.org.hibernate.orm.jdbc.bind=OFF"
-})
 class BaselineOverbookingProbeTest extends AbstractIntegrationTest {
 
     // 경쟁 강도를 정한다. 여기(정원 1에 15명 경쟁)가 "간헐" 구간이다 — 너무 세면(예: 100명)

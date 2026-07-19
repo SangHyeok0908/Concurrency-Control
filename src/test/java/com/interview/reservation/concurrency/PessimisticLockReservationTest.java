@@ -21,7 +21,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.TestPropertySource;
 
 /**
  * 2-2단계 ④: 비관적 쓰기 락({@code SELECT ... FOR UPDATE})이 <b>오버부킹을 결정적으로</b>
@@ -34,12 +33,6 @@ import org.springframework.test.context.TestPropertySource;
  * "그런데 무엇을 더 치렀는가"는 ⑦에서 수치로 갈린다.
  */
 @SpringBootTest
-@TestPropertySource(properties = {
-        // 경쟁자 전원이 동시에 DB 에 닿도록 커넥션 풀을 넉넉히 준다(②·baseline 프로브와 동일 조건).
-        "spring.datasource.hikari.maximum-pool-size=20",
-        "spring.jpa.properties.hibernate.show_sql=false",
-        "logging.level.org.hibernate.orm.jdbc.bind=OFF"
-})
 class PessimisticLockReservationTest extends AbstractIntegrationTest {
 
     private static final int CAPACITY = 1;
