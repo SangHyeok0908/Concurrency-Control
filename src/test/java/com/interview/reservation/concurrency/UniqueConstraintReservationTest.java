@@ -21,7 +21,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.TestPropertySource;
 
 /**
  * 2-1단계 ①: {@code UNIQUE(applicant_id, slot_id)}(V2)가 <b>중복 예약을 결정적으로</b>
@@ -33,11 +32,6 @@ import org.springframework.test.context.TestPropertySource;
  * 애플리케이션 레벨 방어와 DB 최후 방어선의 차이다.
  */
 @SpringBootTest
-@TestPropertySource(properties = {
-        "spring.datasource.hikari.maximum-pool-size=20",
-        "spring.jpa.properties.hibernate.show_sql=false",
-        "logging.level.org.hibernate.orm.jdbc.bind=OFF"
-})
 class UniqueConstraintReservationTest extends AbstractIntegrationTest {
 
     @Autowired ApplicantService applicantService;
