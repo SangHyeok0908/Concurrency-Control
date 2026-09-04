@@ -17,8 +17,8 @@
 | ④ | `step2/pessimistic-lock` | ✅ 완료 (2026-07-18, PR #4) | [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md) |
 | ⑤ | `step2/optimistic-lock` | ✅ 완료 (2026-07-18, 백오프 실측 2026-07-19) | [STEP2-OPTIMISTIC-LOCK.md](STEP2-OPTIMISTIC-LOCK.md) · `V3` |
 | ⑥ | ~~`step2/distributed-lock`~~ | ❌ **생략** (2026-09-04, [근거](#skip-distributed-lock)) | — |
-| ⑦ | `step2/benchmark` | ⏳ **다음 작업** | `docs/STEP2-DEFENSE-BENCHMARK.md` |
-| ⑧ | `step3/tradeoff-analysis` | ⬜ 예정 | README 트레이드오프 섹션 |
+| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [`raw-runs.csv`](benchmark/raw-runs.csv) |
+| ⑧ | `step3/tradeoff-analysis` | ⏳ **다음 작업** | README 트레이드오프 섹션 |
 
 ## Context
 
@@ -228,6 +228,10 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
   ②가 더 든다 — 만석과 없는 슬롯을 구분하려는 `existsById` 때문이다. 방어가 아니라 404/409 구분용
   조회라 제거 가능하며, `capacity=1`처럼 거절이 지배적인 지점의 수치를 왜곡할 수 있다.
   ②를 고치면 이미 머지된 브랜치의 측정 기준이 바뀌므로 **④에서는 손대지 않았다**([근거](STEP2-PESSIMISTIC-LOCK.md))
+  - **결과(2026-09-04): 왜곡이 실재한다.** 극단 경합에서 ④가 5라운드 중 4라운드를 이겼고(②가
+    33~51ms 느림), 낮은 경합에서는 ②가 5/5로 이겼다 — 방향이 경로에 따라 뒤집힌다는 ④의 예측이
+    맞았다([6-2절](STEP2-DEFENSE-BENCHMARK.md)). **⑦에서도 고치지 않았다** — 측정 도중 측정 대상을
+    바꾸면 표의 각 행이 서로 다른 실험이 되기 때문이다. 최적화와 A/B 확인은 ⑧으로 넘긴다
 - **경합 강도 축 (2026-07-17 추가, [실험 통제 원칙](#lock-experiment-control)의 실측 근거).**
   시나리오는 그대로 두고 파라미터만 바꿔 **모든 전략을 두 지점에서** 측정한다. ④⑤가 서로 갈라지는
   유일한 실측 근거이므로 생략하지 않는다.
@@ -242,8 +246,11 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
   - ⚠️ **⑤는 재시도 상한 설정에 따라 결과가 달라지므로 상한을 표에 명시할 것.** 상한 5는
     자리를 못 채우고(120건 중 70건 503), 상한 20은 자리를 채우지만 평균 574ms·TPS 40이 된다.
     상한을 적지 않은 ⑤ 측정치는 해석이 불가능하다
-- 산출물: `docs/STEP2-DEFENSE-BENCHMARK.md` — **(전략 × 경합 수준) 2차원 표** + 그래프,
-  baseline 대비 각 방식 비교
+- 산출물: [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) — (전략 × 경합 수준) 2차원 표
+  + Mermaid 그래프 + [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)(60행 원시 측정치)
+  - 측정 자동화: [`scripts/benchmark.sh`](../scripts/benchmark.sh)(라운드 단위 인터리브 스윕) ·
+    [`scripts/parse_gatling_report.py`](../scripts/parse_gatling_report.py)(이름표로 리포트 식별) ·
+    [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)(중앙값·범위·짝비교 표)
 
 ### 3단계. 트레이드오프 분석 및 최종 선택
 
