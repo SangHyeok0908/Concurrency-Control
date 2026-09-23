@@ -4,14 +4,28 @@
     {
       "name": "reservation-app",
       "runtimeExecutable": "./gradlew",
-      "runtimeArgs": ["bootRun"],
+      "runtimeArgs": [
+        "bootRun"
+      ],
       "port": 8080
     },
     {
       "name": "infra",
       "runtimeExecutable": "docker",
-      "runtimeArgs": ["compose", "up"],
+      "runtimeArgs": [
+        "compose",
+        "up"
+      ],
       "port": 3306
+    },
+    {
+      "name": "reservation-app-optimistic-20",
+      "runtimeExecutable": "./gradlew",
+      "runtimeArgs": [
+        "bootRun",
+        "--args=--reservation.optimistic.max-attempts=20"
+      ],
+      "port": 8080
     }
   ]
 }
