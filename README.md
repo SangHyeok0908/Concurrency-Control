@@ -27,7 +27,7 @@
 
 | 순서 | 방어 수단 | 막는 문제 |
 |---|---|---|
-| 1 | `UNIQUE(user_id, slot_id)` | 중복 예약 (DB 레벨 최후 방어선) — 자연 키가 멱등성 키를 겸합니다 |
+| 1 | `UNIQUE(applicant_id, slot_id)` | 중복 예약 (DB 레벨 최후 방어선) — 자연 키가 멱등성 키를 겸합니다 |
 | 2 | 조건부 `UPDATE ... WHERE remaining > 0` | 정원 초과(오버부킹) |
 | ~~3~~ | ~~멱등성 키~~ | **생략** — 1이 같은 문제를 이미 덮습니다 ([근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key)) |
 | 3 | 비관적 락 / 낙관적 락 | 여러 단계·여러 테이블에 걸친 복잡한 트랜잭션 |
@@ -86,7 +86,7 @@ docker compose ps          # 두 컨테이너가 healthy 인지 확인
 
 ## 실험 결과
 
-> **1단계(방어 없음) 완료 · 2단계 완료.** 방어 전체를 같은 조건에서 재측정한 ⑦ 벤치마크(60회)까지 끝났습니다. 전체 수치와 측정 설계는 [`docs/STEP2-DEFENSE-BENCHMARK.md`](docs/STEP2-DEFENSE-BENCHMARK.md), 원시 측정치는 [`docs/benchmark/raw-runs.csv`](docs/benchmark/raw-runs.csv)에 있습니다.
+> **1단계(방어 없음) 완료 · 2단계 벤치마크 완료 · 3단계 최종 선택 완료.** 방어 전체를 같은 조건에서 재측정한 ⑦ 벤치마크(60회)와 그 수치에 근거한 트레이드오프 분석까지 끝났습니다. 전체 수치와 측정 설계는 [`docs/STEP2-DEFENSE-BENCHMARK.md`](docs/STEP2-DEFENSE-BENCHMARK.md), 원시 측정치는 [`docs/benchmark/raw-runs.csv`](docs/benchmark/raw-runs.csv)에 있습니다.
 
 ### 1단계 — 방어 없는 baseline에서 무엇이 깨졌나
 
@@ -147,11 +147,97 @@ docker compose ps          # 두 컨테이너가 healthy 인지 확인
 
 ### 아키텍처 다이어그램
 
-_작성 예정 — 요청 흐름과 락/방어 계층이 작동하는 지점을 표시._
+1단계의 락 없는 경로는 재현 자산으로 보존하고, 2단계의 방어는 `ReservationStrategy` 구현체로 나란히 추가했습니다. `POST /api/reservations/{strategy}`가 같은 요청을 각 전략으로 보내므로, 방어 수단만 바꾼 before/after 비교가 가능합니다.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Controller as ReservationController
+    participant Resolver as ReservationStrategyResolver
+    participant Strategy as 선택된 ReservationStrategy
+    participant Slot as interview_slot
+    participant Reservation as reservation
+
+    alt 1단계 재현 경로
+        Client->>Controller: POST /api/reservations
+        Controller->>Strategy: ReservationService.reserve()
+    else 2단계 비교 경로
+        Client->>Controller: POST /api/reservations/{strategy}
+        Controller->>Resolver: resolve(strategy)
+        Resolver-->>Controller: baseline / unique / conditional / pessimistic / optimistic
+        Controller->>Strategy: reserve(applicantId, slotId)
+    end
+
+    alt baseline / ① UNIQUE
+        Strategy->>Slot: SELECT remaining
+        Strategy->>Strategy: isFull 검사 후 메모리에서 감소
+        Strategy->>Reservation: IDENTITY INSERT로 FK 공유 락 획득
+        Strategy->>Slot: flush 시 dirty-check UPDATE로 배타 락 요청
+        Note over Strategy,Slot: 경쟁 창 + 공유→배타 락 승격 데드락
+    else ② 조건부 UPDATE — 최종 선택
+        Strategy->>Slot: UPDATE ... SET remaining = remaining - 1<br/>WHERE id = ? AND remaining > 0
+        alt 갱신 1행
+            Strategy->>Reservation: INSERT
+        else 갱신 0행
+            Strategy->>Slot: existsById로 404 / 409 구분
+        end
+    else ④ 비관적 락
+        Strategy->>Slot: SELECT ... FOR UPDATE
+        Strategy->>Slot: 잠금을 보유한 채 감소
+        Strategy->>Reservation: INSERT
+    else ⑤ 낙관적 락
+        loop 각 시도를 REQUIRES_NEW로 상한까지 실행
+            Strategy->>Slot: SELECT id, remaining, version
+            alt version 일치
+                Strategy->>Slot: UPDATE ... WHERE id = ? AND version = ? + flush
+                Strategy->>Reservation: INSERT
+            else version 충돌 / 데드락
+                Slot-->>Strategy: 현재 시도 rollback
+                Strategy->>Strategy: 지수 백오프 + 지터
+            end
+        end
+        Note over Strategy: 성공 즉시 종료, 상한 소진 시 503
+    end
+
+    Note over Slot,Reservation: V2 UNIQUE(applicant_id, slot_id)는 모든 예약 INSERT의 최후 방어선
+    Strategy-->>Controller: 예약 결과 또는 도메인 예외
+    Controller-->>Client: 201 / 4xx / 5xx
+```
+
+`UNIQUE`는 `/unique` 경로에만 존재하는 장치가 아니라 `reservation` 테이블 전체에 적용됩니다. `/unique` 경로는 그 제약 위반을 명시적으로 409로 번역하는 실험 경로이고, 최종 선택인 `/conditional`도 같은 DB 제약으로 데이터는 보호됩니다. 다만 `/conditional`은 아직 중복 제약 예외를 도메인 응답으로 번역하지 않습니다. 자리가 남아 INSERT까지 가면 처리되지 않은 제약 예외로 500, 이미 만석이면 INSERT 전에 409가 되어 응답이 상태에 따라 달라지므로 아래 후속 과제로 분리했습니다. 낙관적 락만 동일 테이블의 `version` 컬럼을 사용하는 별도 엔티티 매핑을 거치며, 충돌한 시도를 새 트랜잭션으로 다시 실행합니다.
 
 ### 트레이드오프 분석
 
-_작성 예정 — 각 방식의 장단점과 적합한 상황, 이 프로젝트 규모에 맞는 현실적 선택과 그 근거._
+#### 최종 선택 — `UNIQUE` + 조건부 UPDATE
+
+두 장치는 경쟁 관계가 아니라 **서로 다른 불변식**을 맡습니다. `UNIQUE(applicant_id, slot_id)`는 같은 지원자·같은 슬롯의 중복 예약을 DB에서 차단하고, 조건부 `UPDATE`는 서로 다른 지원자가 마지막 자리를 두고 경쟁할 때 정원 확인과 감소를 SQL 한 문장으로 묶습니다.
+
+동일한 부하를 60회 인가한 결과, 조건부 UPDATE는 두 경합 지점 모두 **오버부킹 0, 중복 0, KO 0**이었고 정원도 전부 채웠습니다. 특히 `capacity=100`, `contenders=120`에서는 535.7 TPS와 평균 응답시간 중앙값 130ms로 정합성이 같은 후보 중 가장 좋은 결과를 냈습니다. 따라서 현재 도메인의 모양인 **단일 슬롯 행 · 단순 산술 차감 · `remaining > 0` 한 컬럼 가드**가 유지되는 동안은 더 무거운 락보다 이 조합을 채택합니다. 전체 측정 조건과 원시 수치는 [⑦ 방어 전략 벤치마크](docs/STEP2-DEFENSE-BENCHMARK.md)에 있습니다.
+
+| 수단 | 맡는 문제와 실측 비용 | 이 프로젝트의 판단 | 다시 검토할 경계 |
+|---|---|---|---|
+| ① `UNIQUE` | 동일 `(applicant_id, slot_id)` 중복은 막지만, 서로 다른 지원자의 정원 경쟁에는 무력했습니다. 극단 경합에서는 정원 1에 예약 3건이 확정됐습니다. | **유지.** ②의 대체재가 아니라 중복 전용 직교 방어입니다. | 자연 키가 사라지는 복수 예약이나 결제처럼 같은 내용의 요청을 별개로 식별해야 할 때 멱등성 키를 검토합니다. |
+| ② 조건부 UPDATE | 두 지점 모두 정합성과 가용성을 충족했고, 별도 스키마·재시도 상한·추가 인프라가 없습니다. | **채택.** 현재 불변식을 표현하는 가장 작은 도구입니다. | 다중 행 불변식, 애플리케이션 계산, 여러 단계 트랜잭션 때문에 한 SQL 문으로 접을 수 없을 때입니다. |
+| ④ 비관적 락 | 정합성은 ②와 같았습니다. 낮은 경합에서는 ②보다 5/5 느렸고, 극단 경합에서는 4/5 빨랐습니다. 이때 ②에만 404/409 구분용 `existsById`가 거절 199건마다 붙는 구조는 역전과 일치하지만, 그 효과를 분리한 A/B는 아직 하지 않았습니다. | **미채택.** 같은 결과에 락 대기·트랜잭션 결합·다중 자원에서의 데드락 위험을 더합니다. | 충돌이 많고, 다단계·다중 행 불변식을 한 트랜잭션에서 보호해야 하며 재시도 비용이 클 때입니다. |
+| ⑤ 낙관적 락 | `capacity=100`에서 버전 충돌은 상한 5·20의 중앙값이 각각 437·492회였습니다(전체 관측 범위 434~504회). 중앙값 기준 상한 5는 100석 중 52석만 채우고 68건을 503으로 끝냈으며, 상한 20은 전부 채웠지만 166.9 TPS로 ②의 약 1/3이었습니다. | **미채택.** 측정한 두 상한에서는 가용성이나 성능 중 하나를 잃었습니다. | 실제 충돌이 드물고 실패한 연산의 재시도가 값쌀 때입니다. |
+| ③ 멱등성 키 | 자연 키가 요청의 정체성을 이미 고정하고 ①이 이를 강제하므로 별도 Redis 키는 같은 문제를 중복해서 풉니다. | **생략.** 생략 자체가 가벼운 해법부터 쓴다는 원칙의 결과입니다. | 결제·송금처럼 같은 내용도 서로 다른 요청일 수 있거나 한 지원자의 동일 슬롯 복수 예약을 허용할 때입니다. |
+| ⑥ 분산 락 | 공유 상태와 임계 구역이 단일 MySQL의 한 행 UPDATE 안에서 끝납니다. 같은 실험에 Redis 왕복을 더해도 새로운 판단 근거가 생기지 않습니다. | **생략.** 애플리케이션 인스턴스 수만 늘어나는 것은 도입 근거가 아닙니다. | 외부 결제, 다른 저장소, 정확히 한 번 보내야 하는 알림처럼 DB 밖 자원까지 한 임계 구역에서 조율해야 할 때입니다. |
+
+④가 극단 경합에서 빨랐다는 사실은 숨기지 않되, 이를 곧바로 “락이 더 빠르다”로 해석하지 않습니다. 성공 경로의 쿼리 수는 ②가 3개, ④가 4개지만 거절 경로는 ②가 3개, ④가 2개입니다. `capacity=1`에서는 200건 중 199건이 거절되므로, ②에만 붙는 **404/409 구분용 추가 조회**는 관측된 역전과 일치하는 구조적 설명입니다. 다만 아직 그 조회만 제거한 A/B를 하지 않았으므로 인과의 크기까지 확정하지 않습니다. 정합성이 동률이라면 성능이 동률이기만 해도 구조가 단순한 ②를 선택한다는 결론은 변하지 않습니다.
+
+#### 트래픽이 100배가 된다면
+
+이 벤치마크는 노트북 한 대에서 각 조건을 5회 측정한 비교 실험이므로, 535.7 TPS를 100배 트래픽에 그대로 외삽하지 않습니다. 대신 병목과 도메인 경계가 실제로 어떻게 변했는지를 다시 측정합니다.
+
+1. **도메인이 그대로라면 방어도 유지합니다.** 애플리케이션 인스턴스를 수평 확장해도 `remaining`의 공유 상태가 단일 MySQL에 있는 한 조건부 UPDATE와 UNIQUE의 원자성은 유지됩니다. 먼저 쓰기 DB의 처리 한계와 인기 슬롯 한 행의 핫스폿을 별도 부하 시험으로 측정하고, 애플리케이션 확장·읽기 경로 분리·DB 용량을 순서대로 검토합니다. 서로 독립적인 슬롯이 많다면 슬롯 키 기준 분할로 쓰기를 나눌 수 있지만, **한 인기 슬롯의 마지막 자리는 어떤 방식이든 직렬화**해야 하므로 분할로 없앨 수 없습니다. 이때는 admission control이나 대기열로 과부하를 흡수합니다. 읽기 복제본이나 캐시는 조회 부하는 줄여도 예약 쓰기의 정합성을 대신하지 않습니다.
+2. **트랜잭션 모양이 바뀌면 DB 락을 다시 비교합니다.** 여러 슬롯이나 여러 테이블의 불변식을 함께 지켜야 하면 한 행 조건부 UPDATE만으로는 부족합니다. 충돌 빈도와 재시도 비용을 측정해, 충돌이 많고 임계 구역이 긴 경우에는 비관적 락을, 충돌이 드물고 재시도가 싼 경우에는 낙관적 락을 후보로 올립니다.
+3. **임계 구역이 DB 밖으로 나갈 때만 분산 조율을 검토합니다.** 외부 결제 API·다른 저장소·정확히 한 번 처리해야 하는 알림이 예약 확정과 묶이면 단일 DB 트랜잭션의 범위를 벗어납니다. 그때 outbox·사가 같은 경계 설계와 함께 분산 락의 TTL·watchdog·fencing token까지 비교합니다. 단순히 서버가 여러 대라는 이유만으로 Redis 락을 추가하지 않습니다.
+
+#### 의도적으로 남긴 두 후속 과제
+
+- **만석 거절 경로 A/B:** 현재 ②는 조건부 UPDATE가 0행이면 `existsById`로 없는 슬롯(404)과 만석(409)을 구분합니다. 이를 제거하면 쿼리는 3개에서 2개로 줄지만 API 의미도 함께 바뀝니다. 기존 60회 표의 측정 대상을 중간에 바꾸지 않기 위해 그대로 두었으며, 별도 실험에서 응답 계약을 먼저 정한 뒤 3→2쿼리 A/B로 ④의 극단 경합 우위가 사라지는지 확인합니다.
+- **중복 재시도의 응답 의미:** UNIQUE는 두 번째 INSERT를 막고 트랜잭션을 롤백해 예약과 좌석 수를 정확하게 유지합니다. 그러나 응답은 경로와 남은 좌석에 따라 다릅니다. `/unique`는 제약 위반을 잡아 409로 번역합니다. 최종 선택인 `/conditional`은 자리가 남으면 INSERT의 제약 예외가 처리되지 않아 500, 이미 만석이면 INSERT 전에 409로 끝납니다. 첫 성공 응답을 잃은 클라이언트에게 엄밀한 응답은 모두 `200 + 기존 예약`입니다. 이는 별도 멱등성 키가 필요한 동시성 결함이 아니라, UNIQUE 위에서 기존 예약을 조회해 반환하는 API 응답 설계 과제로 분리합니다.
 
 ### 트러블슈팅 회고
 
@@ -163,7 +249,7 @@ _작성 예정 — 구현 과정에서 실제로 부딪힌 문제와 해결 과�
 
 - [x] **1단계** — 락 없는 기본 구현 + Gatling으로 정원 초과/중복 예약 재현·캡처 ([서비스 계층](docs/STEP1-BASELINE-OVERBOOKING.md) · [HTTP 부하](docs/STEP1-GATLING-LOADTEST.md))
 - [x] **2단계** — 방어 수단 구현 및 벤치마크 — ① UNIQUE ✅ · ② 조건부 UPDATE ✅ · ③ 멱등성 키 ❌ 생략 · ④ 비관적 락 ✅ · ⑤ 낙관적 락 ✅ · ⑥ 분산 락 ❌ 생략 · ⑦ 벤치마크 ✅ ([결과](docs/STEP2-DEFENSE-BENCHMARK.md))
-- [ ] **3단계** — 트레이드오프 분석 및 최종 선택 문서화
+- [x] **3단계** — 트레이드오프 분석 및 최종 선택 문서화 ([결론](#트레이드오프-분석))
 - [ ] **4단계** (선택) — 비동기 알림 분리, 동시성 통합 테스트, CI/CD, 배포
 
 브랜치 단위 진행 상황과 다음 작업은 [`docs/STEP2-3-BRANCH-STRATEGY.md`](docs/STEP2-3-BRANCH-STRATEGY.md)가 정본입니다.

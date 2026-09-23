@@ -18,7 +18,7 @@
 | ⑤ | `step2/optimistic-lock` | ✅ 완료 (2026-07-18, 백오프 실측 2026-07-19) | [STEP2-OPTIMISTIC-LOCK.md](STEP2-OPTIMISTIC-LOCK.md) · `V3` |
 | ⑥ | ~~`step2/distributed-lock`~~ | ❌ **생략** (2026-09-04, [근거](#skip-distributed-lock)) | — |
 | ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [`raw-runs.csv`](benchmark/raw-runs.csv) |
-| ⑧ | `step3/tradeoff-analysis` | ⏳ **다음 작업** | README 트레이드오프 섹션 |
+| ⑧ | `step3/tradeoff-analysis` | ✅ 완료 (2026-09-23) | [README 트레이드오프 분석](../README.md#트레이드오프-분석) |
 
 ## Context
 
