@@ -17,7 +17,7 @@
 | ④ | `step2/pessimistic-lock` | ✅ 완료 (2026-07-18, PR #4) | [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md) |
 | ⑤ | `step2/optimistic-lock` | ✅ 완료 (2026-07-18, 백오프 실측 2026-07-19) | [STEP2-OPTIMISTIC-LOCK.md](STEP2-OPTIMISTIC-LOCK.md) · `V3` |
 | ⑥ | ~~`step2/distributed-lock`~~ | ❌ **생략** (2026-09-04, [근거](#skip-distributed-lock)) | — |
-| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [`raw-runs.csv`](benchmark/raw-runs.csv) |
+| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04, 설정 통제 재측정 2026-09-24) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [`raw-runs.csv`](benchmark/raw-runs.csv) · [실행 환경](benchmark/2026-09-24-controlled-run.md) |
 | ⑧ | `step3/tradeoff-analysis` | ✅ 완료 (2026-09-23) | [README 트레이드오프 분석](../README.md#트레이드오프-분석) |
 
 ## Context
@@ -119,21 +119,21 @@
 실험 결과가 되어 비교 자체가 성립하지 않고, "각 도구가 이기도록 상황을 설계해 놓고 각 도구가 이겼다고
 말하는" 카탈로그가 된다. 설계 원칙 1번(방어는 additive, **동일 시나리오**로 before/after 비교)과도 어긋난다.
 
-**조건부 UPDATE만으로 충분한 그 상황 그대로 구현한다.** "이 상황에서는 이기지 못했다"는
-결론이 있는 실험이고, ⑧에서 "그래서 조건부 UPDATE를 골랐다"를 데이터로 뒷받침한다. 각 락의 장점은 코드가
-아니라 아래 두 축으로 드러낸다.
+**조건부 UPDATE만으로 정합성을 지킬 수 있는 그 상황 그대로 구현한다.** 같은 문제에서 락이 추가
+정합성이나 성능상 이점을 주는지 그대로 측정하고, 최종 선택은 측정 결과와 문제 모양을 함께 보고
+결정한다. 각 락의 장점은 아래 두 축으로 드러낸다.
 
 1. **경합 강도(파라미터 스윕).** 시나리오는 그대로 두고 `-Dcapacity` / `-Dcontenders`만 바꾼다.
    낮은 경합과 극단 경합 두 지점에서 재면 낙관적 락의 재시도 폭주와 비관적 락의 대기열 특성이 숫자로 갈린다.
    이건 상황 조작이 아니라 같은 실험의 정당한 파라미터 스윕이다. 측정은 ⑦에서 종합한다.
 2. **경계선 문서화(못 재는 건 재지 않는다).** 이 프로젝트는 단일 MySQL이라 앱 인스턴스를 늘려도 조건부
-   UPDATE가 여전히 이긴다 — Redisson의 명분(공유 상태가 DB 밖에 있음)은 여기서 실측할 수 없다.
+   UPDATE의 원자성이 그대로 유지된다 — Redisson의 명분(공유 상태가 DB 밖에 있음)은 여기서 실측할 수 없다.
    억지 시나리오 대신 [③의 "경계선(면접 대비)"](#skip-idempotency-key)과 같은 방식으로 전제를 명시한다.
    **⑥ 생략은 이 원칙을 끝까지 밀고 간 결과다** — 실측할 수 없는 명분을 코드로 옮기지 않는다
    ([근거](#skip-distributed-lock)).
 
 **④⑤ 각 문서에 넣을 고정 포맷 (세 문장).**
-- 이 상황에서 이 락이 **왜 이기지 못하는가** — 측정값으로.
+- 이 상황에서 이 락을 **왜 채택하거나 채택하지 않는가** — 측정값과 문제 모양으로.
 - 이 락이 **이기는 조건은 무엇인가** — 전제로.
 - 그 조건이 **이 도메인에 왜 없는가** — 뒤집히는 지점까지 함께.
 
@@ -142,8 +142,11 @@
 - 테스트: 오버부킹 0. 문서: 다단계 트랜잭션에서의 명시적 락, 데드락/처리량 트레이드오프 관찰
 - 위 고정 포맷 3문장 필수. 이기는 조건(경합이 높고 임계 구역이 다단계라 재시도 비용이 큰 경우)을
   명시하되, 이 도메인의 임계 구역은 UPDATE 한 방이라 그 조건이 성립하지 않음을 적는다
-- **결과(2026-07-18):** 오버부킹 0 달성, 그러나 정합성이 ②와 동률이고 저경합에서 더 느려
-  **채택하지 않는다.** 근거는 [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md)
+- **예비 결과(2026-07-18):** 오버부킹 0 달성. 당시 7쌍 측정에서는 저경합에서 ②보다 느렸지만,
+  이 성능 결과는 풀·로그를 통제한 2026-09-24 재측정에서 재현되지 않았다. 최종적으로는 성능
+  열세가 아니라, 현재 불변식이 조건부 DML 한 문장으로 표현돼 명시적 잠금 구간이 필요 없다는
+  이유로 **채택하지 않는다.** [예비 측정](STEP2-PESSIMISTIC-LOCK.md) ·
+  [통제 종합](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)
 
 **⑤ `step2/optimistic-lock`** — `@Version` + 재시도(지수 백오프)
 - `V3__add_version_to_slot.sql`: `interview_slot.version` 추가
@@ -180,8 +183,9 @@
 **1. 임계 구역 전체가 DB 안에서 끝난다.** ②가 보여준 대로 이 문제의 임계 구역은
 `UPDATE ... SET remaining = remaining - 1 WHERE id = ? AND remaining > 0` **한 문장**이고,
 원자성의 근거는 InnoDB 행 락이다. 조율할 대상이 전부 한 DB 안에 있으므로 DB 밖의 뮤텍스가 더 지킬
-것이 없다. ④(비관적)·⑤(낙관적)도 같은 DB 안에서 각각 "기다리게 해서"·"다시 하게 해서" 같은 결과에
-도달했고, 둘 다 ②를 이기지 못했다.
+것이 없다. ④(비관적)·⑤(낙관적)도 같은 DB 안에서 각각 "기다리게 해서"·"다시 하게 해서" 같은 정합성에
+도달했다. 통제 측정에서 ④가 같거나 빠른 구간도 있었지만, DB 밖 뮤텍스가 지킬 새로운 불변식은
+생기지 않는다.
 
 **2. "다중 인스턴스"는 명분이 아니다.** [실험 통제 원칙](#lock-experiment-control)에 이미 적어 둔
 대로, 앱 인스턴스를 늘려도 단일 MySQL의 조건부 UPDATE는 원자성을 유지한다. 동시성 제어의 경계는
@@ -228,14 +232,14 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
   ②가 더 든다 — 만석과 없는 슬롯을 구분하려는 `existsById` 때문이다. 방어가 아니라 404/409 구분용
   조회라 제거 가능하며, `capacity=1`처럼 거절이 지배적인 지점의 수치를 왜곡할 수 있다.
   ②를 고치면 이미 머지된 브랜치의 측정 기준이 바뀌므로 **④에서는 손대지 않았다**([근거](STEP2-PESSIMISTIC-LOCK.md))
-  - **결과(2026-09-04): 왜곡이 실재한다.** 극단 경합에서 ④가 5라운드 중 4라운드를 이겼고(②가
-    33~51ms 느림), 낮은 경합에서는 ②가 5/5로 이겼다 — 방향이 경로에 따라 뒤집힌다는 ④의 예측이
-    맞았다([6-2절](STEP2-DEFENSE-BENCHMARK.md)). **⑦에서도 고치지 않았다** — 측정 도중 측정 대상을
-    바꾸면 표의 각 행이 서로 다른 실험이 되기 때문이다. 최적화와 A/B 확인은 ⑧으로 넘긴다
+  - **통제 재측정 결과(2026-09-24):** 극단 경합은 ④가 5/5 빨랐지만, 낮은 경합도 ④ 3승·② 1승·
+    동률 1이었다(중앙값은 둘 다 136ms). 따라서 “경로에 따라 우위가 뒤집힌다”던 기본 프로필 결과는
+    재현되지 않았다([6절](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)). `existsById`는 극단
+    결과와 방향이 맞는 가설일 뿐이며, 인과 확인은 별도 A/B 후속 과제로 남긴다
 - **경합 강도 축 (2026-07-17 추가, [실험 통제 원칙](#lock-experiment-control)의 실측 근거).**
   시나리오는 그대로 두고 파라미터만 바꿔 **모든 전략을 두 지점에서** 측정한다. ④⑤가 서로 갈라지는
   유일한 실측 근거이므로 생략하지 않는다.
-  - 낮은 경합: `-Dcapacity=100 -Dcontenders=120` — 낙관적 락이 유리해지는 지점
+  - 낮은 경합: `-Dcapacity=100 -Dcontenders=120` — 정원 경쟁 기준 낮음. ⑤에는 성공 쓰기 100회의 최악 지점
   - 극단 경합: `-Dcapacity=1 -Dcontenders=200` — 기존 최악 인터리빙 조건
   - 낙관적 락은 재시도 횟수 분포도 함께 남긴다(경합에 따른 폭주를 보여주는 지표).
     `GET /api/metrics/optimistic-retries` 로 꺼낸다(`DELETE` 로 실행 직전 초기화)
@@ -243,11 +247,13 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
     `cap=100`은 성공적 쓰기가 100번이라 낙관적 락에게 **최악**이고, `cap=1`은 쓰기가 한 번뿐이라
     **가장 쉽다.** 2차원 표에 이 주석을 반드시 함께 실을 것 — 없으면 ⑤ 행만 의미가 뒤집힌 채로
     읽힌다
-  - ⚠️ **⑤는 재시도 상한 설정에 따라 결과가 달라지므로 상한을 표에 명시할 것.** 상한 5는
-    자리를 못 채우고(120건 중 70건 503), 상한 20은 자리를 채우지만 평균 574ms·TPS 40이 된다.
-    상한을 적지 않은 ⑤ 측정치는 해석이 불가능하다
+  - ⚠️ **⑤는 재시도 상한 설정에 따라 결과가 달라지므로 상한을 표에 명시할 것.** 통제 재측정에서
+    상한 5는 중앙값 13/100석만 채우고 107건이 503, 상한 20은 100석을 채우지만
+    평균 응답 중앙값 520ms·TPS 137.6이었다. 상한을 적지 않은 ⑤ 측정치는 해석이 불가능하다
 - 산출물: [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) — (전략 × 경합 수준) 2차원 표
-  + Mermaid 그래프 + [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)(60행 원시 측정치)
+  + Mermaid 그래프 + [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)(통제 60행) +
+  [실행 환경·해시](benchmark/2026-09-24-controlled-run.md). 이전 기본 프로필 60행은
+  [`benchmark/archive`](benchmark/archive/2026-09-04-manifest.md)에 보존한다
   - 측정 자동화: [`scripts/benchmark.sh`](../scripts/benchmark.sh)(라운드 단위 인터리브 스윕) ·
     [`scripts/parse_gatling_report.py`](../scripts/parse_gatling_report.py)(이름표로 리포트 식별) ·
     [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)(중앙값·범위·짝비교 표)

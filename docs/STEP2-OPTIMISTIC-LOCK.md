@@ -7,6 +7,11 @@
 > [STEP2-CONDITIONAL-UPDATE.md](STEP2-CONDITIONAL-UPDATE.md), ④는
 > [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md), baseline 재현은
 > [STEP1-BASELINE-OVERBOOKING.md](STEP1-BASELINE-OVERBOOKING.md)를 정본으로 한다.
+>
+> **측정 범위 주의.** 이 문서의 574ms·TPS 40·70건 소진은 ⑤ 구현 당시의 예비 측정이다.
+> Hikari 풀과 로그를 통제한 [2026-09-24 종합 재측정](STEP2-DEFENSE-BENCHMARK.md#5-⑤-낙관적-락이-치르는-비용)의
+> 현재 정본은 상한 5에서 중앙값 13석·107건 소진, 상한 20에서 520ms·TPS 137.6이다. 수치는
+> 바뀌었지만 상한을 낮추면 가용성, 높이면 재시도 비용을 치른다는 결론은 유지된다.
 
 관련 코드:
 [`OptimisticLockReservationStrategy`](../src/main/java/com/interview/reservation/service/strategy/OptimisticLockReservationStrategy.java) ·

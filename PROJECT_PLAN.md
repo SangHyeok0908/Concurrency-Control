@@ -173,10 +173,14 @@ WHERE id = ? AND remaining > 0;
 
 **2-2. 락 방식 비교 구현**
 - [x] **비관적 락**: `@Lock(LockModeType.PESSIMISTIC_WRITE)` → `SELECT ... FOR UPDATE`
-      오버부킹 0 달성. 다만 정합성이 ②와 동률이고 저경합에서 더 느려 **채택하지 않는다**
-      ([근거](docs/STEP2-PESSIMISTIC-LOCK.md))
+      오버부킹 0 달성. 통제 재측정에서는 낮은 경합 응답 중앙값이 ②와 같고 극단 경합은 더
+      빨랐으므로, 성능 열세를 이유로 배제하지 않는다. 현재 불변식이 조건부 DML 한 문장으로
+      표현돼 명시적 잠금 구간이 필요 없다는 이유로 **채택하지 않는다**
+      ([구현 당시 예비 측정](docs/STEP2-PESSIMISTIC-LOCK.md) ·
+      [통제 종합 비교](docs/STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic))
 - [x] **낙관적 락**: `@Version` 컬럼 + 재시도 로직 (지수 백오프)
-      오버부킹 0을 달성했지만, 상한 5는 정원을 못 채우고 상한 20은 조건부 UPDATE 대비 TPS가 약 1/3이라 **채택하지 않는다**
+      오버부킹 0을 달성했지만, 통제 재측정에서 상한 5는 중앙값 13/100석만 채웠고
+      상한 20은 조건부 UPDATE TPS의 23.6%라 **채택하지 않는다**
       ([구현·백오프 근거](docs/STEP2-OPTIMISTIC-LOCK.md) · [전략 종합 비교](docs/STEP2-DEFENSE-BENCHMARK.md))
 - [x] ~~**분산 락**: Redis + Redisson `RLock`~~ → **생략 결정 (2026-09-04)**
       분산 락은 동시성 제어를 DB 하나로 끝낼 수 없을 때(임계 구역에 DB 밖 자원이 들어올 때) 쓰는
@@ -187,7 +191,8 @@ WHERE id = ? AND remaining > 0;
 - [x] 동일한 부하 시나리오로 각 방식 측정
 - [x] 측정 지표: **처리량(TPS), 평균/최대 응답시간, 실패율, 데이터 정합성**
 - [x] 결과를 표 + 그래프로 정리
-      ([60회 종합 결과](docs/STEP2-DEFENSE-BENCHMARK.md) · [원시 측정치](docs/benchmark/raw-runs.csv))
+      ([통제 60회 종합 결과](docs/STEP2-DEFENSE-BENCHMARK.md) · [원시 측정치](docs/benchmark/raw-runs.csv) ·
+      [실행 환경](docs/benchmark/2026-09-24-controlled-run.md))
 
 ---
 
