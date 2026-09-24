@@ -256,6 +256,9 @@ class RunnerHarness:
             file="$state/gradle_count"; count=0; [ -f "$file" ] && count=$(cat "$file")
             count=$((count + 1)); printf '%s' "$count" > "$file"
             printf '%s\n' "$*" >> "$state/gradle.log"
+            if [ "${FAKE_GRADLE_CONSUME_STDIN:-0}" = 1 ]; then
+              while IFS= read -r _; do :; done
+            fi
             if [ "${FAKE_GRADLE_FAIL_AT:-}" = "$count" ]; then exit 17; fi
             cap=1
             for argument in "$@"; do case "$argument" in -Dcapacity=*) cap=${argument#-Dcapacity=} ;; esac; done
@@ -481,6 +484,20 @@ class BenchmarkScriptTest(unittest.TestCase):
         self.assertFalse((campaign / "raw-runs.csv").exists())
         self.assertIn("warmup", result.stderr.lower())
         self.assertIn("warmup", (campaign / "manifest.md").read_text().lower())
+
+    def test_gatling_cannot_consume_the_schedule_loop_stdin(self):
+        result = self.harness.run(
+            "--campaign-id", "stdin-isolated", "--phase", "a",
+            FAKE_GRADLE_CONSUME_STDIN="1",
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(110, self.harness.count("gradle_count"))
+        self.assertEqual(110, self.harness.count("reset_count"))
+        self.assertEqual(100, len(self.harness.csv_rows("stdin-isolated")))
+        manifest = (self.harness.campaign("stdin-isolated") / "manifest.md").read_text()
+        self.assertIn("- phase_a_warmup_status: complete", manifest)
+        self.assertIn("- phase_a_measured_rows: 100", manifest)
 
     def test_report_selection_uses_only_the_new_directory_and_requires_exactly_one(self):
         stale = self.harness.root / "build" / "reports" / "gatling" / "stale-same-label"

@@ -501,7 +501,7 @@ invoke_gatling() {
   "$BENCHMARK_GRADLEW" gatlingRun --console=plain -q \
     -DbaseUrl="$BASE_URL" -Dstrategy="$strategy" \
     -Dcapacity="$capacity" -Dcontenders="$contenders" \
-    >"$GATLING_LOG" 2>&1
+    >"$GATLING_LOG" 2>&1 </dev/null
 }
 
 run_warmup_entry() {
