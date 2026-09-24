@@ -83,7 +83,9 @@ def main():
     out.append("| 경합 | 라운드 | ② 조건부 | ④ 비관적 | 차(②−④) | 빠른 쪽 |")
     out.append("|---|---|---|---|---|---|")
     for point_key, point_title in POINTS:
-        wins = 0
+        conditional_wins = 0
+        pessimistic_wins = 0
+        ties = 0
         lines = []
         rounds = sorted({int(r["round"]) for r in rows if r["contention"] == point_key})
         for rd in rounds:
@@ -94,13 +96,23 @@ def main():
             if c is None or pz is None:
                 continue
             diff = c - pz
-            wins += 1 if diff < 0 else 0
-            faster = "②" if diff < 0 else "④"
+            if diff < 0:
+                conditional_wins += 1
+                faster = "②"
+            elif diff > 0:
+                pessimistic_wins += 1
+                faster = "④"
+            else:
+                ties += 1
+                faster = "동률"
             label = "낮음" if point_key == "low" else "극단"
             lines.append(f"| {label} | {rd} | {c} | {pz} | {diff:+d} | **{faster}** |")
         out.extend(lines)
         label = "낮은 경합" if point_key == "low" else "극단 경합"
-        out.append(f"| **{label} 합계** | | | | | **② {wins}승 / ④ {len(lines) - wins}승** |")
+        score = f"② {conditional_wins}승 / ④ {pessimistic_wins}승"
+        if ties:
+            score += f" / 동률 {ties}"
+        out.append(f"| **{label} 합계** | | | | | **{score}** |")
 
     out.append("\n### ⑤ 낙관적 락 — 재시도 분포\n")
     out.append("| 상한 | 경합 | 성공 | 재시도 소진(503) | 버전 충돌 | 데드락 | 성공당 평균 시도 |")

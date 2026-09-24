@@ -38,7 +38,11 @@ public abstract class AbstractIntegrationTest {
     @TestConfiguration(proxyBeanMethods = false)
     static class ContainersConfig {
 
-        static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0");
+        // Spring 테스트 컨텍스트 캐시는 설정별 Hikari 풀을 함께 유지한다. 일반 컨텍스트(20)와
+        // 100개 연결을 쓰는 백오프/benchmark 컨텍스트가 공존해도 MySQL 기본 상한 151에 걸리지
+        // 않도록 테스트 컨테이너만 넉넉히 올린다. 운영 docker-compose 설정은 바꾸지 않는다.
+        static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0")
+                .withCommand("--max-connections=400");
 
         static {
             MYSQL.start();

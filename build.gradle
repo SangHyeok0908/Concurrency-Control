@@ -54,6 +54,16 @@ tasks.named('test') {
 	systemProperty 'user.timezone', 'Asia/Seoul'
 }
 
+tasks.register('benchmarkScriptTest', Exec) {
+	group = 'verification'
+	description = 'Runs regression tests for benchmark parsing and environment guards.'
+	commandLine 'python3', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v'
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('benchmarkScriptTest')
+}
+
 tasks.named('bootRun') {
 	systemProperty 'user.timezone', 'Asia/Seoul'
 }

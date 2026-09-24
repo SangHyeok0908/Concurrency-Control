@@ -1,0 +1,28 @@
+# HTTP 방어 전략 벤치마크 전용 프로필.
+#
+# 성능 비교에서 방어 전략 외 변수를 고정한다. 기본 프로필의 SQL 추적은 개발 중 쿼리 확인에는
+# 유용하지만, 쿼리 수가 서로 다른 전략의 응답시간을 비교할 때는 콘솔 I/O 비용 자체가 측정값에
+# 섞인다. 커넥션 풀도 라이브러리 기본값에 맡기면 요청을 먼저 직렬화해 실제 DB 경합을 바꾼다.
+spring:
+  datasource:
+    hikari:
+      # 가장 큰 성공 경합 지점(capacity=100)의 요청이 모두 DB에 닿을 수 있게 하면서,
+      # 로컬 MySQL max_connections=151에는 관리 연결용 여유를 남긴다.
+      maximum-pool-size: 100
+      # 측정 중 커넥션 생성 비용이 특정 전략에 붙지 않도록 시작 시 같은 수를 준비한다.
+      minimum-idle: 100
+
+  jpa:
+    properties:
+      hibernate:
+        show_sql: false
+        format_sql: false
+        use_sql_comments: false
+
+logging:
+  level:
+    # 데드락 등 전략별 예외가 대량 스택트레이스로 출력되면 그 콘솔 I/O가 성능 차이로 섞인다.
+    # 환경 확인 API는 로거 없이 HTTP로 검증하므로 측정 프로필에서는 애플리케이션 로그를 끈다.
+    root: "OFF"
+    org.hibernate.SQL: "OFF"
+    org.hibernate.orm.jdbc.bind: "OFF"
