@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -388,7 +389,27 @@ class BenchmarkScriptTest(unittest.TestCase):
         )
 
         self.assertNotEqual(0, result.returncode)
-        self.assertTrue((custom_root / "custom-root" / "manifest.md").is_file())
+        manifest = custom_root / "custom-root" / "manifest.md"
+        self.assertTrue(manifest.is_file())
+        manifest_text = manifest.read_text()
+        for key, target in (
+            ("predecessor_raw_runs", self.harness.root / "docs" / "benchmark" / "raw-runs.csv"),
+            (
+                "predecessor_execution_record",
+                self.harness.root / "docs" / "benchmark" / "2026-09-24-controlled-run.md",
+            ),
+        ):
+            line = next(
+                item for item in manifest_text.splitlines()
+                if item.startswith("- %s: " % key)
+            )
+            link_target = line.rsplit("](", 1)[1][:-1]
+            decoded_target = Path(unquote(link_target))
+            self.assertFalse(decoded_target.is_absolute())
+            self.assertEqual(
+                target.resolve(),
+                (manifest.parent / decoded_target).resolve(),
+            )
         self.assertFalse(old_csv.exists())
         self.assertFalse(old_distribution.exists())
 
@@ -428,7 +449,23 @@ class BenchmarkScriptTest(unittest.TestCase):
         self.assertFalse((campaign / "raw-runs.csv").exists())
         self.assertFalse((campaign / "environment-phase-a.json").exists())
         self.assertIn("environment", failed.stderr.lower())
-        self.assertIn("failure_reason", (campaign / "manifest.md").read_text())
+        manifest_text = (campaign / "manifest.md").read_text()
+        self.assertIn("failure_reason", manifest_text)
+        self.assertIn(
+            "- predecessor_methodology: methodology-v1-fixed-order\n",
+            manifest_text,
+        )
+        self.assertIn(
+            "- predecessor_raw_runs: "
+            "[docs/benchmark/raw-runs.csv](../../raw-runs.csv)\n",
+            manifest_text,
+        )
+        self.assertIn(
+            "- predecessor_execution_record: "
+            "[docs/benchmark/2026-09-24-controlled-run.md]"
+            "(../../2026-09-24-controlled-run.md)\n",
+            manifest_text,
+        )
         self.assertEqual(2, retry.returncode)
         self.assertEqual(0, self.harness.count("gradle_count"))
         self.assertEqual([], self.harness.lines("mysql.log"))

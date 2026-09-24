@@ -256,13 +256,36 @@ PY
 }
 
 create_manifest() {
-  local created
+  local created predecessor_raw_runs predecessor_execution_record
   created=$(now)
+  predecessor_raw_runs=$(python3 - "$CAMPAIGN_DIR" \
+      "$PROJECT_ROOT/docs/benchmark/raw-runs.csv" <<'PY'
+import os
+import sys
+from urllib.parse import quote
+
+print(quote(os.path.relpath(
+    os.path.realpath(sys.argv[2]), start=os.path.realpath(sys.argv[1])), safe="/"))
+PY
+  ) || return 1
+  predecessor_execution_record=$(python3 - "$CAMPAIGN_DIR" \
+      "$PROJECT_ROOT/docs/benchmark/2026-09-24-controlled-run.md" <<'PY'
+import os
+import sys
+from urllib.parse import quote
+
+print(quote(os.path.relpath(
+    os.path.realpath(sys.argv[2]), start=os.path.realpath(sys.argv[1])), safe="/"))
+PY
+  ) || return 1
   printf '%s\n' \
     "# Benchmark Campaign $CAMPAIGN_ID" "" "## Campaign" "" \
     "- campaign_id: $CAMPAIGN_ID" \
     "- rounds_per_phase: $ROUNDS" \
     "- schedule_version: williams-10-v1" \
+    "- predecessor_methodology: methodology-v1-fixed-order" \
+    "- predecessor_raw_runs: [docs/benchmark/raw-runs.csv]($predecessor_raw_runs)" \
+    "- predecessor_execution_record: [docs/benchmark/2026-09-24-controlled-run.md]($predecessor_execution_record)" \
     "- created_at: $created" \
     "- gatling_version: 3.13.5" "" "## Phase A" "" \
     "- phase_a_invocation: $invocation" \
