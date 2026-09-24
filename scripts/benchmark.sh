@@ -1,307 +1,773 @@
 #!/usr/bin/env bash
-#
-# ⑦ step2/benchmark — 방어 전략별 부하 스윕 실행기
-#
-# 왜 스크립트인가. ④는 같은 부하를 손으로 번갈아 7쌍 인가했고, 그 결과 "실행 간 편차가 전략 간
-# 차이보다 커서 확정할 수 없다"로 끝났다(docs/STEP2-PESSIMISTIC-LOCK.md 4절). 게다가 그 실행분은
-# 리포트에 전략 이름표가 없어 사후 식별이 불가능해 "재현 가능한 측정 자산이 아니다"라고 스스로
-# 단서를 달았다. 이 스크립트는 그 두 가지를 갚는다 — 반복을 자동화해 편차를 중앙값으로 눌러
-# 가리고, 실행 하나하나를 CSV 한 줄로 남겨 표의 모든 숫자에 출처를 붙인다.
-#
-# 실행 순서는 라운드 단위 인터리브다. 한 전략을 5회 연속 돌릴 때 생기는 장기 워밍업 편향을
-# 줄이려고 라운드마다 전 전략을 한 바퀴씩 돈다(④가 손으로 하던 interleaved 측정의 자동화).
-# 다만 라운드 안의 전략 순서는 고정이라 순서 효과를 완전히 없앤 설계는 아니다. 이 한계는
-# 통제 실행 기록과 종합 문서에 명시한다.
-#
-# 사용법:
-#   ./gradlew bootRun --args='--spring.profiles.active=benchmark' 로 앱을 :8080 에 띄운 뒤
-#   scripts/benchmark.sh --out /tmp/new-runs.csv                       # Phase A: 50회
-#   scripts/benchmark.sh --phase b --out /tmp/new-runs.csv             # Phase B: 같은 CSV에 10회
-#   # --out이 정본 경로가 아니면 Phase B 분포도 같은 디렉터리에 파생 이름으로 저장된다.
-#   scripts/benchmark.sh --out /tmp/dry.csv --strategies conditional --rounds 1
+# Methodology-v2 two-phase, counterbalanced benchmark campaign runner.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$PROJECT_ROOT" || exit 1
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 MYSQL_CONTAINER="${MYSQL_CONTAINER:-reservation-mysql}"
-DEFAULT_OUT_CSV="docs/benchmark/raw-runs.csv"
-DEFAULT_ATTEMPT_DISTRIBUTION_JSON="docs/benchmark/optimistic-attempt-distribution-cap20.json"
-OUT_CSV="${OUT_CSV:-$DEFAULT_OUT_CSV}"
-if [[ ${ATTEMPT_DISTRIBUTION_JSON+x} == x ]]; then
-  DISTRIBUTION_PATH_EXPLICIT=1
-else
-  DISTRIBUTION_PATH_EXPLICIT=0
-  ATTEMPT_DISTRIBUTION_JSON=""
-fi
+BENCHMARK_GRADLEW="${BENCHMARK_GRADLEW:-./gradlew}"
 ENVIRONMENT_WAIT_SECONDS="${ENVIRONMENT_WAIT_SECONDS:-60}"
-ROUNDS=5
-PHASE="a"
-# ⑤ 재시도 상한. 앱의 @Value 로 기동 시점에 고정되므로 스크립트가 바꿀 수 없다 —
-# 여기서는 CSV 에 "이 실행이 어느 상한이었는지"를 적기만 한다. 상한을 적지 않은 ⑤ 측정치는
-# 해석이 불가능하다(docs/STEP2-3-BRANCH-STRATEGY.md ⑦).
-OPTIMISTIC_CAP=5
-STRATEGIES=""
+CAMPAIGN_ROOT="docs/benchmark/campaigns"
+CANONICAL_OUT="docs/benchmark/raw-runs-v2.csv"
+V1_CANONICAL="docs/benchmark/raw-runs.csv"
+ROUNDS=10
+CAMPAIGN_ID=""
+PHASE=""
+PRINT_PLAN=0
+seen_campaign=0
+seen_phase=0
+seen_rounds=0
+seen_print=0
+seen_root=0
+seen_canonical=0
+
+ORIGINAL_INVOCATION=$(python3 - "$0" "$@" <<'PY'
+import shlex
+import sys
+print(" ".join(shlex.quote(part) for part in sys.argv[1:]))
+PY
+) || exit 1
+
+usage_error() {
+  echo "benchmark.sh: error: $1" >&2
+  exit 2
+}
+
+need_value() {
+  if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+    usage_error "$1 requires a value"
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --phase)      PHASE="$2"; shift 2 ;;
-    --rounds)     ROUNDS="$2"; shift 2 ;;
-    --strategies) STRATEGIES="$2"; shift 2 ;;
-    --out)        OUT_CSV="$2"; shift 2 ;;
-    *) echo "알 수 없는 옵션: $1" >&2; exit 2 ;;
+    --campaign-id)
+      need_value "$@"
+      (( seen_campaign == 0 )) || usage_error "duplicate --campaign-id"
+      seen_campaign=1; CAMPAIGN_ID="$2"; shift 2 ;;
+    --phase)
+      need_value "$@"
+      (( seen_phase == 0 )) || usage_error "duplicate --phase"
+      seen_phase=1; PHASE="$2"; shift 2 ;;
+    --rounds)
+      need_value "$@"
+      (( seen_rounds == 0 )) || usage_error "duplicate --rounds"
+      seen_rounds=1; ROUNDS="$2"; shift 2 ;;
+    --print-plan)
+      (( seen_print == 0 )) || usage_error "duplicate --print-plan"
+      seen_print=1; PRINT_PLAN=1; shift ;;
+    --campaign-root)
+      need_value "$@"
+      (( seen_root == 0 )) || usage_error "duplicate --campaign-root"
+      seen_root=1; CAMPAIGN_ROOT="$2"; shift 2 ;;
+    --canonical-out)
+      need_value "$@"
+      (( seen_canonical == 0 )) || usage_error "duplicate --canonical-out"
+      seen_canonical=1; CANONICAL_OUT="$2"; shift 2 ;;
+    *) usage_error "unknown option: $1" ;;
   esac
 done
 
+(( seen_campaign == 1 )) || usage_error "--campaign-id is required"
+(( seen_phase == 1 )) || usage_error "--phase is required"
+[[ "$CAMPAIGN_ID" =~ ^[A-Za-z0-9._-]+$ ]] || usage_error "invalid campaign id"
+[[ "$CAMPAIGN_ID" != "." && "$CAMPAIGN_ID" != ".." ]] \
+  || usage_error "campaign id must name a direct child"
 case "$PHASE" in
   a) OPTIMISTIC_CAP=5 ;;
   b) OPTIMISTIC_CAP=20 ;;
-  *) echo "phase 는 a 또는 b" >&2; exit 2 ;;
+  *) usage_error "phase must be a or b" ;;
 esac
+[[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || usage_error "rounds must be a positive multiple of 10"
+(( ROUNDS % 10 == 0 )) || usage_error "rounds must be a positive multiple of 10"
+[[ -n "$CAMPAIGN_ROOT" && -n "$CANONICAL_OUT" ]] || usage_error "paths must not be empty"
+case "$CAMPAIGN_ROOT$CANONICAL_OUT" in
+  *$'\r'*|*$'\n'*) usage_error "paths must be single-line values" ;;
+esac
+CAMPAIGN_ROOT_DISPLAY="$CAMPAIGN_ROOT"
+CANONICAL_OUT_DISPLAY="$CANONICAL_OUT"
 
-if [[ ! "$ROUNDS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "rounds 는 1 이상의 정수여야 함: $ROUNDS" >&2
-  exit 2
+canonical_guard=$(python3 - "$CANONICAL_OUT" "$V1_CANONICAL" <<'PY'
+import os
+import sys
+
+candidate = os.path.abspath(sys.argv[1])
+legacy = os.path.abspath(sys.argv[2])
+same = os.path.realpath(candidate) == os.path.realpath(legacy)
+if not same and os.path.lexists(candidate) and os.path.lexists(legacy):
+    try:
+        same = os.path.samefile(candidate, legacy)
+    except OSError:
+        same = False
+if same:
+    raise SystemExit(1)
+print(candidate)
+PY
+)
+if [[ $? -ne 0 || -z "$canonical_guard" ]]; then
+  usage_error "--canonical-out must not resolve to methodology-v1 raw-runs.csv"
+fi
+CANONICAL_OUT="$canonical_guard"
+CAMPAIGN_ROOT=$(python3 - "$CAMPAIGN_ROOT" <<'PY'
+import os
+import sys
+print(os.path.abspath(sys.argv[1]))
+PY
+) || usage_error "invalid --campaign-root"
+[[ -n "$CAMPAIGN_ROOT" ]] || usage_error "invalid --campaign-root"
+
+if (( PRINT_PLAN == 1 )); then
+  exec python3 scripts/benchmark_schedule.py --rounds "$ROUNDS"
 fi
 
-if [[ -z "$STRATEGIES" ]]; then
-  if [[ "$PHASE" == "a" ]]; then
-    STRATEGIES="baseline unique conditional pessimistic optimistic"
+[[ -n "$BENCHMARK_GRADLEW" ]] || usage_error "BENCHMARK_GRADLEW must not be empty"
+[[ "$ENVIRONMENT_WAIT_SECONDS" =~ ^[0-9]+$ ]] \
+  || usage_error "ENVIRONMENT_WAIT_SECONDS must be a non-negative integer"
+
+CAMPAIGN_DIR="$CAMPAIGN_ROOT/$CAMPAIGN_ID"
+CAMPAIGN_CSV="$CAMPAIGN_DIR/raw-runs.csv"
+MANIFEST="$CAMPAIGN_DIR/manifest.md"
+ENVIRONMENT_A="$CAMPAIGN_DIR/environment-phase-a.json"
+ENVIRONMENT_B="$CAMPAIGN_DIR/environment-phase-b.json"
+[[ "$(dirname "$CAMPAIGN_DIR")" == "$CAMPAIGN_ROOT" ]] \
+  || usage_error "campaign directory escaped campaign root"
+if [[ "$PHASE" == "a" ]]; then
+  ENVIRONMENT_PATH="$ENVIRONMENT_A"
+else
+  ENVIRONMENT_PATH="$ENVIRONMENT_B"
+fi
+APP_START_ID="$CAMPAIGN_ID-phase-$PHASE"
+if [[ "$PHASE" == "a" ]]; then
+  ENVIRONMENT_DISPLAY="$CAMPAIGN_ROOT_DISPLAY/$CAMPAIGN_ID/environment-phase-a.json"
+else
+  ENVIRONMENT_DISPLAY="$CAMPAIGN_ROOT_DISPLAY/$CAMPAIGN_ID/environment-phase-b.json"
+fi
+
+path_exists() { [[ -e "$1" || -L "$1" ]]; }
+
+manifest_has_exactly_one() {
+  local count
+  count=$(grep -Fxc -- "$1" "$MANIFEST" 2>/dev/null || true)
+  [[ "$count" == "1" ]]
+}
+
+if [[ "$PHASE" == "a" ]]; then
+  path_exists "$CAMPAIGN_DIR" \
+    && usage_error "Phase A requires a new campaign id: $CAMPAIGN_ID"
+else
+  [[ -d "$CAMPAIGN_DIR" && ! -L "$CAMPAIGN_DIR" ]] \
+    || usage_error "Phase B requires an existing campaign directory"
+  [[ -f "$MANIFEST" && ! -L "$MANIFEST" ]] \
+    || usage_error "Phase B requires the Phase A manifest"
+  [[ -f "$ENVIRONMENT_A" && ! -L "$ENVIRONMENT_A" ]] \
+    || usage_error "Phase B requires the Phase A environment snapshot"
+  [[ -f "$CAMPAIGN_CSV" && ! -L "$CAMPAIGN_CSV" ]] \
+    || usage_error "Phase B requires the Phase A campaign CSV"
+  path_exists "$ENVIRONMENT_B" \
+    && usage_error "Phase B has already been attempted for this campaign"
+  manifest_has_exactly_one "- phase_a_status: complete" \
+    || usage_error "Phase A manifest is not complete"
+  if grep -Fqx -- "## Phase B" "$MANIFEST" \
+      || grep -Eq -- '^- phase_b_' "$MANIFEST"; then
+    usage_error "Phase B has already been attempted for this campaign"
+  fi
+  python3 scripts/validate_benchmark_campaign.py "$CAMPAIGN_CSV" \
+      --require phase-a --rounds "$ROUNDS" >/dev/null \
+    || usage_error "Phase B requires complete matching Phase A evidence"
+  python3 - "$CAMPAIGN_CSV" "$ENVIRONMENT_A" "$CAMPAIGN_ID" <<'PY' \
+    || usage_error "Phase A environment snapshot hash mismatch"
+import csv
+import hashlib
+import sys
+
+with open(sys.argv[2], "rb") as handle:
+    actual = hashlib.sha256(handle.read()).hexdigest()
+with open(sys.argv[1], "r", newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle))
+hashes = {row.get("environment_sha256") for row in rows if row.get("phase") == "a"}
+campaigns = {row.get("campaign_id") for row in rows}
+if hashes != {actual} or campaigns != {sys.argv[3]}:
+    print("Phase A environment snapshot or campaign identity mismatch", file=sys.stderr)
+    raise SystemExit(1)
+PY
+fi
+
+# Generate the plan before claiming campaign state. A deterministic scheduler
+# failure therefore does not burn a campaign id.
+PLAN_FILE=""
+REPORT_SNAPSHOT=""
+GATLING_LOG=""
+VALIDATOR_ERROR=""
+cleanup() {
+  [[ -z "$PLAN_FILE" || ! -e "$PLAN_FILE" ]] || rm -f -- "$PLAN_FILE"
+  [[ -z "$REPORT_SNAPSHOT" || ! -e "$REPORT_SNAPSHOT" ]] || rm -f -- "$REPORT_SNAPSHOT"
+  [[ -z "$GATLING_LOG" || ! -e "$GATLING_LOG" ]] || rm -f -- "$GATLING_LOG"
+  [[ -z "$VALIDATOR_ERROR" || ! -e "$VALIDATOR_ERROR" ]] || rm -f -- "$VALIDATOR_ERROR"
+}
+trap cleanup EXIT
+PLAN_FILE=$(mktemp "${TMPDIR:-/tmp}/benchmark-plan.XXXXXX") || exit 1
+REPORT_SNAPSHOT=$(mktemp "${TMPDIR:-/tmp}/benchmark-reports.XXXXXX") || exit 1
+GATLING_LOG=$(mktemp "${TMPDIR:-/tmp}/benchmark-gatling.XXXXXX") || exit 1
+VALIDATOR_ERROR=$(mktemp "${TMPDIR:-/tmp}/benchmark-environment.XXXXXX") || exit 1
+python3 scripts/benchmark_schedule.py --rounds "$ROUNDS" > "$PLAN_FILE" \
+  || { echo "benchmark.sh: schedule generation failed" >&2; exit 1; }
+
+one_line() { printf '%s' "$1" | tr '\r\n' '  '; }
+now() { date +%Y-%m-%dT%H:%M:%S; }
+
+invocation="$ORIGINAL_INVOCATION"
+
+manifest_set() {
+  local key value
+  key="$1"
+  value=$(one_line "$2")
+  python3 - "$MANIFEST" "$key" "$value" <<'PY'
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+prefix = "- %s: " % sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines(True)
+indexes = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+if len(indexes) != 1:
+    raise SystemExit("manifest key is missing or duplicated: %s" % sys.argv[2])
+ending = "\n" if lines[indexes[0]].endswith("\n") else ""
+lines[indexes[0]] = prefix + sys.argv[3] + ending
+descriptor, name = tempfile.mkstemp(
+    prefix=".%s." % path.name, suffix=".tmp", dir=str(path.parent))
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+        handle.write("".join(lines))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(name, str(path))
+except BaseException:
+    try:
+        os.unlink(name)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
+create_manifest() {
+  local created
+  created=$(now)
+  printf '%s\n' \
+    "# Benchmark Campaign $CAMPAIGN_ID" "" "## Campaign" "" \
+    "- campaign_id: $CAMPAIGN_ID" \
+    "- rounds_per_phase: $ROUNDS" \
+    "- schedule_version: williams-10-v1" \
+    "- created_at: $created" \
+    "- gatling_version: 3.13.5" "" "## Phase A" "" \
+    "- phase_a_invocation: $invocation" \
+    "- phase_a_status: running" \
+    "- phase_a_app_start_id: $CAMPAIGN_ID-phase-a" \
+    "- phase_a_environment_path: $CAMPAIGN_ROOT_DISPLAY/$CAMPAIGN_ID/environment-phase-a.json" \
+    "- phase_a_environment_sha256: pending" \
+    "- phase_a_expected_max_attempts: 5" \
+    "- phase_a_git_head: pending" \
+    "- phase_a_os: pending" \
+    "- phase_a_java: pending" \
+    "- phase_a_gradle: pending" \
+    "- phase_a_mysql: pending" \
+    "- phase_a_max_connections: pending" \
+    "- phase_a_initial_slot_count: pending" \
+    "- phase_a_initial_reservation_count: pending" \
+    "- phase_a_started_at: $created" \
+    "- phase_a_completed_at: pending" \
+    "- phase_a_warmup_status: pending" \
+    "- phase_a_measured_status: pending" \
+    "- phase_a_measured_rows: 0" \
+    "- phase_a_measurement_started_at: pending" \
+    "- phase_a_measurement_completed_at: pending" \
+    "- phase_a_failure_reason: none" > "$MANIFEST"
+}
+
+append_phase_b_manifest() {
+  local started
+  started=$(now)
+  printf '%s\n' "" "## Phase B" "" \
+    "- phase_b_attempted: true" \
+    "- phase_b_status: not_started" \
+    "- phase_b_invocation: $invocation" \
+    "- phase_b_app_start_id: $CAMPAIGN_ID-phase-b" \
+    "- phase_b_environment_path: $ENVIRONMENT_DISPLAY" \
+    "- phase_b_environment_sha256: pending" \
+    "- phase_b_expected_max_attempts: 20" \
+    "- phase_b_git_head: pending" \
+    "- phase_b_os: pending" \
+    "- phase_b_java: pending" \
+    "- phase_b_gradle: pending" \
+    "- phase_b_mysql: pending" \
+    "- phase_b_max_connections: pending" \
+    "- phase_b_initial_slot_count: pending" \
+    "- phase_b_initial_reservation_count: pending" \
+    "- phase_b_started_at: $started" \
+    "- phase_b_completed_at: pending" \
+    "- phase_b_warmup_status: pending" \
+    "- phase_b_measured_status: pending" \
+    "- phase_b_measured_rows: 0" \
+    "- phase_b_measurement_started_at: pending" \
+    "- phase_b_measurement_completed_at: pending" \
+    "- phase_b_failure_reason: none" >> "$MANIFEST"
+}
+
+if [[ "$PHASE" == "a" ]]; then
+  mkdir -p "$CAMPAIGN_ROOT" || exit 1
+  mkdir "$CAMPAIGN_DIR" || usage_error "Phase A campaign id was claimed concurrently"
+  create_manifest \
+    || { echo "benchmark.sh: cannot create campaign manifest" >&2; exit 1; }
+else
+  append_phase_b_manifest || exit 1
+  manifest_set phase_b_status running || exit 1
+fi
+
+phase_key() { printf 'phase_%s_%s' "$PHASE" "$1"; }
+set_phase_fact() { manifest_set "$(phase_key "$1")" "$2"; }
+fail_before_measurement() {
+  local category reason
+  category="$1"
+  reason=$(one_line "$2")
+  set_phase_fact status failed >/dev/null 2>&1 || true
+  if [[ "$category" == "warmup_failed" ]]; then
+    set_phase_fact warmup_status failed >/dev/null 2>&1 || true
   else
-    # Phase B 는 ⑤ 하나만 다시 잰다. 상한만 바꾼 재측정이라 다른 전략은 Phase A 값을 쓴다.
-    STRATEGIES="optimistic"
+    set_phase_fact warmup_status not_started >/dev/null 2>&1 || true
   fi
-fi
-
-if [[ "$PHASE" == "b" && "$STRATEGIES" != "optimistic" ]]; then
-  echo "Phase B는 optimistic 전략의 상한 20 재측정 전용임" >&2
-  exit 2
-fi
-
-if (( DISTRIBUTION_PATH_EXPLICIT == 0 )); then
-  if [[ "$OUT_CSV" == "$DEFAULT_OUT_CSV" ]]; then
-    ATTEMPT_DISTRIBUTION_JSON="$DEFAULT_ATTEMPT_DISTRIBUTION_JSON"
-  elif [[ "$OUT_CSV" == *.csv ]]; then
-    ATTEMPT_DISTRIBUTION_JSON="${OUT_CSV%.csv}-optimistic-attempt-distribution-cap20.json"
-  else
-    ATTEMPT_DISTRIBUTION_JSON="${OUT_CSV}-optimistic-attempt-distribution-cap20.json"
-  fi
-fi
-
-# 경합 2지점. "낮음/극단"이라는 이름은 정원 경쟁 기준이며, ⑤에게는 의미가 정반대다
-# (cap=100 은 같은 행에 성공적으로 쓰는 횟수가 100 번이라 낙관적 락에게 최악이고,
-#  cap=1 은 쓰기가 한 번뿐이라 가장 쉽다 — docs/STEP2-OPTIMISTIC-LOCK.md 5-1절).
-CONTENTION_POINTS=("low:100:120" "extreme:1:200")
-
-mysql_q() { docker exec "$MYSQL_CONTAINER" mysql -uroot -N -B -e "$1" reservation 2>/dev/null; }
-
-if [[ "$PHASE" == "a" && -e "$OUT_CSV" ]]; then
-  echo "✗ Phase A 출력 파일이 이미 존재함: $OUT_CSV" >&2
-  echo "  기존 데이터와 섞이지 않도록 새 --out 경로를 사용하세요." >&2
-  exit 2
-fi
-if [[ "$PHASE" == "b" && ! -f "$OUT_CSV" ]]; then
-  echo "✗ Phase B가 이어 쓸 Phase A CSV가 없음: $OUT_CSV" >&2
-  exit 2
-fi
-if [[ "$PHASE" == "b" ]]; then
-  if [[ -z "$ATTEMPT_DISTRIBUTION_JSON" ]]; then
-    echo "✗ Phase B 분포 출력 경로가 비어 있음" >&2
-    exit 2
-  fi
-  if [[ ! -d "$(dirname "$ATTEMPT_DISTRIBUTION_JSON")" ]]; then
-    echo "✗ Phase B 분포 출력 디렉터리가 없음: $(dirname "$ATTEMPT_DISTRIBUTION_JSON")" >&2
-    exit 2
-  fi
-  if ! python3 scripts/validate_phase_b_input.py "$OUT_CSV" --rounds "$ROUNDS"; then
-    echo "✗ Phase B는 같은 rounds로 완주한 Phase A CSV에만 이어 쓸 수 있음" >&2
-    exit 2
-  fi
-fi
-
-verify_benchmark_environment() {
-  local response validation rc second
-
-  response=$(curl -fsS "$BASE_URL/api/metrics/benchmark-environment") || {
-    echo "✗ benchmark 환경 API에 연결할 수 없음: $BASE_URL" >&2
-    echo "  spring.profiles.active=benchmark 로 앱을 기동했는지 확인하세요." >&2
-    return 1
-  }
-
-  for (( second = 0; second < ENVIRONMENT_WAIT_SECONDS; second++ )); do
-    validation=$(printf '%s' "$response" | python3 scripts/validate_benchmark_environment.py \
-      --expected-max-attempts "$OPTIMISTIC_CAP" 2>&1)
-    rc=$?
-
-    case "$rc" in
-      0)
-        echo "▶ $validation"
-        return 0
-        ;;
-      2)
-        sleep 1
-        response=$(curl -fsS "$BASE_URL/api/metrics/benchmark-environment") || return 1
-        ;;
-      *)
-        echo "$validation" >&2
-        return 1
-        ;;
-    esac
-  done
-
-  echo "$validation" >&2
-  echo "✗ Hikari 풀 준비를 ${ENVIRONMENT_WAIT_SECONDS}초 안에 마치지 못함" >&2
+  set_phase_fact measured_status not_started >/dev/null 2>&1 || true
+  set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+  set_phase_fact failure_reason "$reason" >/dev/null 2>&1 || true
+  echo "benchmark.sh: $category: $reason" >&2
   return 1
 }
 
-# CSV를 만들기 전에 검증한다. 잘못 띄운 앱의 결과가 정본 파일에 한 줄이라도 섞이면 안 된다.
-verify_benchmark_environment || exit 1
+mysql_q() {
+  docker exec "$MYSQL_CONTAINER" mysql -uroot -N -B -e "$1" reservation 2>/dev/null
+}
 
-if [[ ! -f "$OUT_CSV" ]]; then
-  if ! echo "ts,phase,round,strategy,optimistic_max_attempts,contention,capacity,contenders,slot_id,requests,ok,ko,mean_ms,p95_ms,max_ms,tps,remaining,confirmed,overbooking,duplicates,retry_succeeded,retry_exhausted,version_conflicts,deadlocks,mean_attempts" > "$OUT_CSV"; then
-    echo "✗ CSV 출력 파일을 만들 수 없음: $OUT_CSV" >&2
-    exit 1
+capture_metadata() {
+  local git_head os_version java_version gradle_version mysql_version
+  local max_connections counts counts_without_tab
+  local initial_slots initial_reservations extra_counts
+  git_head=$(git rev-parse HEAD 2>/dev/null) || return 1
+  os_version=$(uname -a 2>/dev/null) || return 1
+  java_version=$(java -version 2>&1 | head -1) || return 1
+  gradle_version=$("$BENCHMARK_GRADLEW" --version --console=plain 2>&1 \
+    | awk '/^Gradle / { print; exit }') || return 1
+  [[ -n "$gradle_version" ]] || return 1
+  mysql_version=$(mysql_q "SELECT VERSION()") || return 1
+  max_connections=$(mysql_q "SELECT @@max_connections") || return 1
+  counts=$(mysql_q "/* initial benchmark counts */ SELECT (SELECT COUNT(*) FROM interview_slot), (SELECT COUNT(*) FROM reservation)") \
+    || return 1
+  case "$counts" in *$'\n'*) return 1 ;; esac
+  counts_without_tab=${counts//$'\t'/}
+  [[ $((${#counts} - ${#counts_without_tab})) -eq 1 ]] || return 1
+  IFS=$'\t' read -r initial_slots initial_reservations extra_counts <<< "$counts"
+  [[ -z "$extra_counts" && "$initial_slots" =~ ^[0-9]+$ \
+      && "$initial_reservations" =~ ^[0-9]+$ ]] || return 1
+  case "$mysql_version$max_connections" in *$'\n'*) return 1 ;; esac
+  [[ "$max_connections" =~ ^[1-9][0-9]*$ ]] || return 1
+  set_phase_fact git_head "$git_head" || return 1
+  set_phase_fact os "$os_version" || return 1
+  set_phase_fact java "$java_version" || return 1
+  set_phase_fact gradle "$gradle_version" || return 1
+  set_phase_fact mysql "$mysql_version" || return 1
+  set_phase_fact max_connections "$max_connections" || return 1
+  set_phase_fact initial_slot_count "$initial_slots" || return 1
+  set_phase_fact initial_reservation_count "$initial_reservations" || return 1
+}
+
+fetch_environment() {
+  local response validation rc waited line found_hash stored_hash
+  waited=0
+  while :; do
+    response=$(curl -fsS "$BASE_URL/api/metrics/benchmark-environment") \
+      || { STEP_ERROR="cannot reach benchmark environment endpoint"; return 1; }
+    validation=$(printf '%s' "$response" \
+      | python3 scripts/validate_benchmark_environment.py \
+          --expected-max-attempts "$OPTIMISTIC_CAP" \
+          --canonical-output "$ENVIRONMENT_PATH" 2>"$VALIDATOR_ERROR")
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
+      found_hash=""
+      while IFS= read -r line; do
+        if [[ "$line" =~ ^environment_sha256=([0-9a-f]{64})$ ]]; then
+          [[ -z "$found_hash" ]] \
+            || { STEP_ERROR="environment validator returned duplicate hashes"; return 1; }
+          found_hash="${BASH_REMATCH[1]}"
+        fi
+      done <<< "$validation"
+      [[ -n "$found_hash" ]] \
+        || { STEP_ERROR="environment validator did not return a canonical hash"; return 1; }
+      stored_hash=$(python3 - "$ENVIRONMENT_PATH" <<'PY'
+import hashlib
+import sys
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY
+) || { STEP_ERROR="cannot hash stored environment snapshot"; return 1; }
+      [[ "$stored_hash" == "$found_hash" ]] \
+        || { STEP_ERROR="stored environment snapshot hash mismatch"; return 1; }
+      ENVIRONMENT_SHA256="$found_hash"
+      return 0
+    fi
+    if [[ $rc -eq 2 && $waited -lt $ENVIRONMENT_WAIT_SECONDS ]]; then
+      waited=$((waited + 1))
+      sleep 1
+      continue
+    fi
+    STEP_ERROR=$(one_line "$(cat "$VALIDATOR_ERROR")")
+    [[ -n "$STEP_ERROR" ]] || STEP_ERROR="environment validation failed"
+    return 1
+  done
+}
+
+STEP_ERROR=""
+ENVIRONMENT_SHA256=""
+fetch_environment \
+  || { fail_before_measurement environment_failed "$STEP_ERROR"; exit 1; }
+set_phase_fact environment_sha256 "$ENVIRONMENT_SHA256" || exit 1
+capture_metadata \
+  || { fail_before_measurement precondition_failed "cannot capture benchmark preconditions"; exit 1; }
+
+reset_retry_metrics() {
+  curl -fsS -X DELETE "$BASE_URL/api/metrics/optimistic-retries" >/dev/null
+}
+
+query_max_slot() {
+  local value
+  value=$(mysql_q "SELECT COALESCE(MAX(id), 0) FROM interview_slot") || return 1
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$value"
+}
+
+snapshot_reports() {
+  local directory name
+  : > "$REPORT_SNAPSHOT" || return 1
+  for directory in build/reports/gatling/*; do
+    [[ -d "$directory" ]] || continue
+    name=${directory##*/}
+    printf '%s\n' "$name" >> "$REPORT_SNAPSHOT" || return 1
+  done
+}
+
+select_new_report() {
+  local directory name count selected
+  count=0
+  selected=""
+  for directory in build/reports/gatling/*; do
+    [[ -d "$directory" ]] || continue
+    name=${directory##*/}
+    if ! grep -Fqx -- "$name" "$REPORT_SNAPSHOT"; then
+      count=$((count + 1))
+      selected="$directory"
+    fi
+  done
+  [[ $count -eq 1 ]] || return 1
+  [[ -f "$selected/simulation.log" && -f "$selected/js/stats.js" ]] || return 1
+  REPORT_DIR="$selected"
+}
+
+invoke_gatling() {
+  "$BENCHMARK_GRADLEW" gatlingRun --console=plain -q \
+    -DbaseUrl="$BASE_URL" -Dstrategy="$strategy" \
+    -Dcapacity="$capacity" -Dcontenders="$contenders" \
+    >"$GATLING_LOG" 2>&1
+}
+
+run_warmup_entry() {
+  local before_slot after_slot
+  reset_retry_metrics \
+    || { STEP_ERROR="retry metric reset failed"; return 1; }
+  before_slot=$(query_max_slot) \
+    || { STEP_ERROR="pre-run slot query failed"; return 1; }
+  snapshot_reports \
+    || { STEP_ERROR="cannot snapshot Gatling report directories"; return 1; }
+  invoke_gatling \
+    || { STEP_ERROR="Gatling warmup failed"; return 1; }
+  after_slot=$(query_max_slot) \
+    || { STEP_ERROR="post-run slot query failed"; return 1; }
+  [[ "$after_slot" -gt "$before_slot" ]] \
+    || { STEP_ERROR="warmup did not create a new slot"; return 1; }
+  select_new_report \
+    || { STEP_ERROR="warmup did not create exactly one complete report"; return 1; }
+}
+
+set_phase_fact warmup_status running || exit 1
+warmup_count=0
+while IFS=$'\t' read -r schedule_version schedule_cycle schedule_row measured_round \
+    position_in_round treatment_id strategy contention capacity contenders; do
+  [[ "$schedule_version" != "schedule_version" ]] || continue
+  run_warmup_entry \
+    || { fail_before_measurement warmup_failed "$STEP_ERROR"; exit 1; }
+  warmup_count=$((warmup_count + 1))
+  [[ $warmup_count -lt 10 ]] || break
+done < "$PLAN_FILE"
+[[ $warmup_count -eq 10 ]] \
+  || { fail_before_measurement warmup_failed "schedule row 1 did not contain ten treatments"; exit 1; }
+set_phase_fact warmup_status complete || exit 1
+
+slot_id=""; requests=""; ok=""; ko=""; mean_ms=""; p95_ms=""; max_ms=""
+burst_start_epoch_ms=""; burst_end_epoch_ms=""; burst_wall_ms=""; tps=""
+remaining=""; confirmed=""; overbooking=""; duplicates=""
+retry_succeeded=""; retry_exhausted=""; version_conflicts=""; deadlocks=""
+mean_attempts=""; run_status=""; error_reason=""; rows_written=0
+
+build_row_json() {
+  local timestamp
+  timestamp=$(now)
+  python3 - "2" "$CAMPAIGN_ID" "$PHASE" "$APP_START_ID" "$ENVIRONMENT_SHA256" \
+    "$schedule_version" "$schedule_cycle" "$schedule_row" "$measured_round" \
+    "$position_in_round" "$treatment_id" "$timestamp" "$strategy" "$OPTIMISTIC_CAP" \
+    "$contention" "$capacity" "$contenders" "$slot_id" "$requests" "$ok" "$ko" \
+    "$mean_ms" "$p95_ms" "$max_ms" "$burst_start_epoch_ms" "$burst_end_epoch_ms" \
+    "$burst_wall_ms" "$tps" "$remaining" "$confirmed" "$overbooking" "$duplicates" \
+    "$retry_succeeded" "$retry_exhausted" "$version_conflicts" "$deadlocks" \
+    "$mean_attempts" "$run_status" "$error_reason" <<'PY'
+import json
+import sys
+
+fields = [
+    "schema_version", "campaign_id", "phase", "app_start_id",
+    "environment_sha256", "schedule_version", "schedule_cycle", "schedule_row",
+    "measured_round", "position_in_round", "treatment_id", "ts", "strategy",
+    "optimistic_max_attempts", "contention", "capacity", "contenders", "slot_id",
+    "requests", "ok", "ko", "mean_ms", "p95_ms", "max_ms",
+    "burst_start_epoch_ms", "burst_end_epoch_ms", "burst_wall_ms", "tps",
+    "remaining", "confirmed", "overbooking", "duplicates", "retry_succeeded",
+    "retry_exhausted", "version_conflicts", "deadlocks", "mean_attempts",
+    "run_status", "error_reason",
+]
+values = sys.argv[1:]
+if len(values) != len(fields):
+    raise SystemExit("internal benchmark row field mismatch")
+print(json.dumps(dict(zip(fields, values)), ensure_ascii=False, allow_nan=False))
+PY
+}
+
+write_current_row() {
+  local payload mode
+  payload=$(build_row_json) || return 1
+  if [[ "$PHASE" == "a" && $rows_written -eq 0 ]]; then
+    mode="--create"
+  else
+    mode="--append"
   fi
-fi
+  printf '%s\n' "$payload" \
+    | python3 scripts/write_benchmark_row.py "$mode" "$CAMPAIGN_CSV" || return 1
+  rows_written=$((rows_written + 1))
+}
 
-total=$(( ROUNDS * $(echo "$STRATEGIES" | wc -w) * ${#CONTENTION_POINTS[@]} ))
-done_n=0
-rows_written=0
-distribution_staging=""
-cleanup_distribution_staging() {
-  if [[ -n "$distribution_staging" && -f "$distribution_staging" ]]; then
-    rm -f -- "$distribution_staging"
+clear_measurements() {
+  slot_id=""; requests=""; ok=""; ko=""; mean_ms=""; p95_ms=""; max_ms=""
+  burst_start_epoch_ms=""; burst_end_epoch_ms=""; burst_wall_ms=""; tps=""
+  remaining=""; confirmed=""; overbooking=""; duplicates=""
+  retry_succeeded=""; retry_exhausted=""; version_conflicts=""; deadlocks=""
+  mean_attempts=""
+}
+
+record_measured_failure() {
+  local status reason
+  status="$1"
+  reason=$(one_line "$2")
+  run_status="$status"
+  error_reason="$reason"
+  if ! write_current_row; then
+    set_phase_fact status failed >/dev/null 2>&1 || true
+    set_phase_fact measured_status writer_failed >/dev/null 2>&1 || true
+    set_phase_fact measured_rows "$rows_written" >/dev/null 2>&1 || true
+    set_phase_fact measurement_completed_at "$(now)" >/dev/null 2>&1 || true
+    set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+    set_phase_fact failure_reason "row writer failed after $status" >/dev/null 2>&1 || true
+    echo "benchmark.sh: writer failed; no recursive failure row was attempted" >&2
+    return 1
+  fi
+  set_phase_fact status failed >/dev/null 2>&1 || true
+  set_phase_fact measured_status failed >/dev/null 2>&1 || true
+  set_phase_fact measured_rows "$rows_written" >/dev/null 2>&1 || true
+  set_phase_fact measurement_completed_at "$(now)" >/dev/null 2>&1 || true
+  set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+  set_phase_fact failure_reason "$reason" >/dev/null 2>&1 || true
+  echo "benchmark.sh: $status: $reason" >&2
+  return 1
+}
+
+parse_report_values() {
+  local output output_without_commas extra value
+  output="$1"
+  case "$output" in *$'\n'*) return 1 ;; esac
+  output_without_commas=${output//,/}
+  [[ $((${#output} - ${#output_without_commas})) -eq 9 ]] || return 1
+  IFS=',' read -r requests ok ko mean_ms p95_ms max_ms \
+    burst_start_epoch_ms burst_end_epoch_ms burst_wall_ms tps extra <<< "$output"
+  [[ -z "$extra" ]] || return 1
+  for value in "$requests" "$ok" "$ko" "$mean_ms" "$p95_ms" "$max_ms" \
+      "$burst_start_epoch_ms" "$burst_end_epoch_ms" "$burst_wall_ms"; do
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  done
+  [[ "$tps" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+read_invariants() {
+  local output output_without_tabs extra
+  output=$(mysql_q "/* benchmark invariant tuple */ SELECT s.remaining, (SELECT COUNT(*) FROM reservation r WHERE r.slot_id = s.id AND r.status = 'CONFIRMED'), (SELECT COALESCE(SUM(d.c - 1), 0) FROM (SELECT COUNT(*) AS c FROM reservation WHERE slot_id = $slot_id GROUP BY applicant_id, slot_id HAVING COUNT(*) > 1) d) FROM interview_slot s WHERE s.id = $slot_id") \
+    || return 1
+  case "$output" in *$'\n'*) return 1 ;; esac
+  output_without_tabs=${output//$'\t'/}
+  [[ $((${#output} - ${#output_without_tabs})) -eq 2 ]] || return 1
+  IFS=$'\t' read -r remaining confirmed duplicates extra <<< "$output"
+  [[ -z "$extra" && "$remaining" =~ ^-?[0-9]+$ \
+      && "$confirmed" =~ ^[0-9]+$ && "$duplicates" =~ ^[0-9]+$ ]] || return 1
+  overbooking=$(( confirmed > capacity ? confirmed - capacity : 0 ))
+}
+
+read_retry_metrics() {
+  local retry_json output output_without_commas extra value
+  retry_json=$(curl -fsS "$BASE_URL/api/metrics/optimistic-retries") || return 1
+  output=$(printf '%s' "$retry_json" | python3 scripts/parse_optimistic_metrics.py) \
+    || return 1
+  case "$output" in *$'\n'*) return 1 ;; esac
+  output_without_commas=${output//,/}
+  [[ $((${#output} - ${#output_without_commas})) -eq 4 ]] || return 1
+  IFS=',' read -r retry_succeeded retry_exhausted version_conflicts deadlocks \
+    mean_attempts extra <<< "$output"
+  [[ -z "$extra" ]] || return 1
+  for value in "$retry_succeeded" "$retry_exhausted" "$version_conflicts" "$deadlocks"; do
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  done
+  [[ "$mean_attempts" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+measure_entry() {
+  local before_slot after_slot report_output
+  clear_measurements
+  run_status=""
+  error_reason=""
+  reset_retry_metrics \
+    || { record_measured_failure retry_metrics_failed "retry metric reset failed"; return 1; }
+  before_slot=$(query_max_slot) \
+    || { record_measured_failure db_read_failed "pre-run slot query failed"; return 1; }
+  snapshot_reports \
+    || { record_measured_failure db_read_failed "cannot snapshot report directories"; return 1; }
+  invoke_gatling \
+    || { record_measured_failure gatling_failed "Gatling exited nonzero"; return 1; }
+  after_slot=$(query_max_slot) \
+    || { record_measured_failure db_read_failed "post-run slot query failed"; return 1; }
+  [[ "$after_slot" -gt "$before_slot" ]] \
+    || { record_measured_failure seed_failed "Gatling did not create a new slot"; return 1; }
+  slot_id="$after_slot"
+  select_new_report \
+    || { record_measured_failure parse_failed "expected exactly one complete new Gatling report"; return 1; }
+  report_output=$(python3 scripts/parse_gatling_report.py \
+    "$REPORT_DIR" "$strategy" "$capacity" "$contenders") \
+    || { record_measured_failure parse_failed "Gatling report parser failed"; return 1; }
+  if ! parse_report_values "$report_output"; then
+    clear_measurements
+    slot_id="$after_slot"
+    record_measured_failure parse_failed "Gatling report parser returned malformed values"
+    return 1
+  fi
+  if ! read_invariants; then
+    remaining=""; confirmed=""; overbooking=""; duplicates=""
+    record_measured_failure db_read_failed "database invariant tuple failed validation"
+    return 1
+  fi
+  if ! read_retry_metrics; then
+    retry_succeeded=""; retry_exhausted=""; version_conflicts=""; deadlocks=""
+    mean_attempts=""
+    record_measured_failure retry_metrics_failed "retry metric snapshot failed validation"
+    return 1
+  fi
+  run_status="ok"
+  error_reason=""
+  if ! write_current_row; then
+    set_phase_fact status failed >/dev/null 2>&1 || true
+    set_phase_fact measured_status writer_failed >/dev/null 2>&1 || true
+    set_phase_fact measured_rows "$rows_written" >/dev/null 2>&1 || true
+    set_phase_fact measurement_completed_at "$(now)" >/dev/null 2>&1 || true
+    set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+    set_phase_fact failure_reason "row writer failed" >/dev/null 2>&1 || true
+    echo "benchmark.sh: writer failed; no recursive failure row was attempted" >&2
+    return 1
   fi
 }
-trap cleanup_distribution_staging EXIT
-echo "▶ phase=$PHASE rounds=$ROUNDS strategies=[$STRATEGIES] → 총 $total 실행 → $OUT_CSV"
 
-for (( round = 1; round <= ROUNDS; round++ )); do
-  for point in "${CONTENTION_POINTS[@]}"; do
-    IFS=':' read -r label capacity contenders <<< "$point"
-    for strategy in $STRATEGIES; do
-      done_n=$(( done_n + 1 ))
-      printf '[%2d/%2d] round=%d %-11s %-7s cap=%-3d cont=%-3d ' \
-        "$done_n" "$total" "$round" "$strategy" "$label" "$capacity" "$contenders"
+set_phase_fact measured_status running || exit 1
+set_phase_fact measurement_started_at "$(now)" || exit 1
+while IFS=$'\t' read -r schedule_version schedule_cycle schedule_row measured_round \
+    position_in_round treatment_id strategy contention capacity contenders; do
+  [[ "$schedule_version" != "schedule_version" ]] || continue
+  measure_entry || exit 1
+done < "$PLAN_FILE"
 
-      # ⑤의 재시도 분포는 누적 카운터라, 이 실행 하나의 분포만 보려면 직전에 비워야 한다.
-      if ! curl -fsS -X DELETE "$BASE_URL/api/metrics/optimistic-retries" > /dev/null; then
-        echo "✗ 낙관적 재시도 통계 초기화 실패 — 측정을 중단함" >&2
-        exit 1
-      fi
-
-      # 시뮬레이션이 만든 슬롯 id 를 밖으로 내보내지 않으므로, 실행 전후의 최대 id 차이로
-      # "이번 실행이 만든 슬롯"을 특정한다. 스윕이 순차 실행이라 이 방식이 성립한다.
-      if ! before_slot=$(mysql_q "SELECT COALESCE(MAX(id), 0) FROM interview_slot"); then
-        echo "✗ 실행 전 슬롯 조회 실패 — 측정을 중단함" >&2
-        exit 1
-      fi
-      if [[ ! "$before_slot" =~ ^[0-9]+$ ]]; then
-        echo "✗ 실행 전 슬롯 id가 올바르지 않음: $before_slot" >&2
-        exit 1
-      fi
-
-      start_ns=$(date +%s)
-      ./gradlew gatlingRun --console=plain -q \
-        -DbaseUrl="$BASE_URL" -Dstrategy="$strategy" \
-        -Dcapacity="$capacity" -Dcontenders="$contenders" \
-        > /tmp/gatling-run.log 2>&1
-      rc=$?
-      elapsed=$(( $(date +%s) - start_ns ))
-
-      if [[ $rc -ne 0 ]]; then
-        echo "✗ gatlingRun 실패(rc=$rc) — 부분 CSV를 완료로 취급하지 않고 중단함" >&2
-        tail -5 /tmp/gatling-run.log >&2
-        exit 1
-      fi
-
-      if ! slot_id=$(mysql_q "SELECT MAX(id) FROM interview_slot"); then
-        echo "✗ 실행 후 슬롯 조회 실패 — 측정을 중단함" >&2
-        exit 1
-      fi
-      if [[ ! "$slot_id" =~ ^[0-9]+$ || "$slot_id" -le "$before_slot" ]]; then
-        echo "✗ 새 슬롯이 생기지 않음 — 시드 실패로 보고 중단함" >&2
-        exit 1
-      fi
-
-      if ! report_dir=$(ls -dt build/reports/gatling/*/ 2>/dev/null | head -1) \
-          || [[ -z "$report_dir" ]]; then
-        echo "✗ Gatling 리포트 디렉터리를 찾지 못함 — 측정을 중단함" >&2
-        exit 1
-      fi
-      if ! stats=$(python3 scripts/parse_gatling_report.py \
-          "$report_dir" "$strategy" "$capacity" "$contenders") \
-          || [[ -z "$stats" ]]; then
-        echo "✗ 리포트 파싱 실패: $report_dir — 측정을 중단함" >&2
-        exit 1
-      fi
-      IFS=',' read -r requests ok ko mean_ms p95_ms max_ms tps <<< "$stats"
-
-      # 정합성은 리포트가 아니라 DB 에서 읽는다. 오버부킹은 HTTP 응답이 아니라 확정 행 수로만
-      # 증명되기 때문이다(1단계부터 지켜 온 원칙).
-      if ! confirmed=$(mysql_q "SELECT COUNT(*) FROM reservation WHERE slot_id = $slot_id AND status = 'CONFIRMED'") \
-          || ! remaining=$(mysql_q "SELECT remaining FROM interview_slot WHERE id = $slot_id") \
-          || ! duplicates=$(mysql_q "SELECT COALESCE(SUM(c - 1), 0) FROM (SELECT COUNT(*) c FROM reservation WHERE slot_id = $slot_id GROUP BY applicant_id, slot_id HAVING COUNT(*) > 1) d"); then
-        echo "✗ 정합성 DB 조회 실패 — 측정을 중단함" >&2
-        exit 1
-      fi
-      if [[ ! "$confirmed" =~ ^[0-9]+$ || ! "$remaining" =~ ^-?[0-9]+$ \
-          || ! "$duplicates" =~ ^[0-9]+$ ]]; then
-        echo "✗ 정합성 DB 값이 올바르지 않음 — 측정을 중단함" >&2
-        exit 1
-      fi
-      overbooking=$(( confirmed > capacity ? confirmed - capacity : 0 ))
-
-      if ! retry_json=$(curl -fsS "$BASE_URL/api/metrics/optimistic-retries"); then
-        echo "✗ 낙관적 재시도 통계 조회 실패 — CSV에 기록하지 않고 중단함" >&2
-        exit 1
-      fi
-      if ! retry_stats=$(printf '%s' "$retry_json" | python3 scripts/parse_optimistic_metrics.py); then
-        echo "✗ 낙관적 재시도 통계 검증 실패 — CSV에 기록하지 않고 중단함" >&2
-        exit 1
-      fi
-      IFS=',' read -r r_ok r_exhausted r_conflicts r_deadlocks r_mean <<< "$retry_stats"
-
-      if [[ "$PHASE" == "b" && "$strategy" == "optimistic" && "$label" == "low" ]]; then
-        # 마지막 낮은 경합 관측을 staging에 보관하고 Phase B 전체가 완주한 뒤에만 공개한다.
-        distribution_staging="${ATTEMPT_DISTRIBUTION_JSON}.tmp.$$"
-        if ! printf '%s\n' "$retry_json" > "$distribution_staging"; then
-          echo "✗ 낙관적 재시도 분포 staging 실패 — 측정을 중단함" >&2
-          exit 1
-        fi
-      fi
-
-      if ! printf '%s,%s,%d,%s,%d,%s,%d,%d,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%s,%s,%s,%s,%s,%s\n' \
-        "$(date +%Y-%m-%dT%H:%M:%S)" "$PHASE" "$round" "$strategy" "$OPTIMISTIC_CAP" \
-        "$label" "$capacity" "$contenders" "$slot_id" \
-        "$requests" "$ok" "$ko" "$mean_ms" "$p95_ms" "$max_ms" "$tps" \
-        "$remaining" "$confirmed" "$overbooking" "$duplicates" \
-        "$r_ok" "$r_exhausted" "$r_conflicts" "$r_deadlocks" "$r_mean" >> "$OUT_CSV"; then
-        echo "✗ CSV 행 기록 실패 — 측정을 중단함" >&2
-        exit 1
-      fi
-      rows_written=$(( rows_written + 1 ))
-
-      printf '✓ %3ss  ok=%-3s ko=%-3s mean=%-4sms tps=%-6s 확정=%-3s 오버부킹=%s\n' \
-        "$elapsed" "$ok" "$ko" "$mean_ms" "$tps" "$confirmed" "$overbooking"
-    done
-  done
-done
-
-if (( rows_written != total )); then
-  echo "✗ 예정한 $total행 중 ${rows_written}행만 기록됨 — 완료로 표시하지 않음" >&2
+expected_rows=$((ROUNDS * 10))
+if [[ $rows_written -ne $expected_rows ]]; then
+  set_phase_fact status failed >/dev/null 2>&1 || true
+  set_phase_fact measured_status failed >/dev/null 2>&1 || true
+  set_phase_fact measured_rows "$rows_written" >/dev/null 2>&1 || true
+  set_phase_fact measurement_completed_at "$(now)" >/dev/null 2>&1 || true
+  set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+  set_phase_fact failure_reason "expected $expected_rows measured rows, wrote $rows_written" \
+    >/dev/null 2>&1 || true
+  echo "benchmark.sh: measured row count mismatch" >&2
   exit 1
 fi
-if [[ "$PHASE" == "b" ]]; then
-  if [[ -z "$distribution_staging" || ! -s "$distribution_staging" ]]; then
-    echo "✗ Phase B 분포 결과가 없어 완료할 수 없음" >&2
+
+if [[ "$PHASE" == "a" ]]; then
+  set_phase_fact measured_rows "$rows_written" || exit 1
+  python3 scripts/validate_benchmark_campaign.py "$CAMPAIGN_CSV" \
+      --require phase-a --rounds "$ROUNDS" >/dev/null || {
+    set_phase_fact status failed >/dev/null 2>&1 || true
+    set_phase_fact measured_status validation_failed >/dev/null 2>&1 || true
+    set_phase_fact measurement_completed_at "$(now)" >/dev/null 2>&1 || true
+    set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+    set_phase_fact failure_reason "Phase A campaign validation failed" >/dev/null 2>&1 || true
+    echo "benchmark.sh: Phase A campaign validation failed" >&2
     exit 1
-  fi
-  if ! mv "$distribution_staging" "$ATTEMPT_DISTRIBUTION_JSON"; then
-    echo "✗ 낙관적 재시도 분포 게시 실패 — 완료로 표시하지 않음" >&2
-    exit 1
-  fi
-  distribution_staging=""
-  echo "▶ 재시도 분포 — $ATTEMPT_DISTRIBUTION_JSON"
+  }
+  set_phase_fact measured_status complete || exit 1
+  set_phase_fact measurement_completed_at "$(now)" || exit 1
+  set_phase_fact status complete || exit 1
+  set_phase_fact completed_at "$(now)" || exit 1
+  echo "benchmark campaign Phase A complete: $CAMPAIGN_CSV"
+  exit 0
 fi
-echo "▶ 완료 — $OUT_CSV"
+
+set_phase_fact measured_rows "$rows_written" || exit 1
+python3 scripts/validate_benchmark_campaign.py "$CAMPAIGN_CSV" \
+    --require complete --rounds "$ROUNDS" >/dev/null || {
+  set_phase_fact status failed >/dev/null 2>&1 || true
+  set_phase_fact measured_status validation_failed >/dev/null 2>&1 || true
+  set_phase_fact measurement_completed_at "$(now)" >/dev/null 2>&1 || true
+  set_phase_fact failure_reason "complete campaign validation failed" >/dev/null 2>&1 || true
+  set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+  echo "benchmark.sh: complete campaign validation failed" >&2
+  exit 1
+}
+set_phase_fact measured_status complete || exit 1
+set_phase_fact measurement_completed_at "$(now)" || exit 1
+
+if [[ "$ROUNDS" == "10" ]]; then
+  python3 scripts/promote_benchmark_campaign.py "$CAMPAIGN_CSV" \
+      --to "$CANONICAL_OUT" || {
+    set_phase_fact status promotion_failed >/dev/null 2>&1 || true
+    set_phase_fact failure_reason "canonical promotion failed" >/dev/null 2>&1 || true
+    set_phase_fact completed_at "$(now)" >/dev/null 2>&1 || true
+    echo "benchmark.sh: canonical promotion failed; campaign CSV was preserved" >&2
+    exit 1
+  }
+  set_phase_fact status complete || exit 1
+  set_phase_fact completed_at "$(now)" || exit 1
+  echo "benchmark campaign complete: $CAMPAIGN_CSV"
+else
+  set_phase_fact status complete_noncanonical || exit 1
+  set_phase_fact completed_at "$(now)" || exit 1
+  echo "benchmark campaign complete_noncanonical: $CAMPAIGN_CSV"
+fi
+exit 0
