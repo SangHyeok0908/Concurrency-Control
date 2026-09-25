@@ -3,7 +3,7 @@
 > 서비스-계층 프로브([STEP1-BASELINE-OVERBOOKING.md](STEP1-BASELINE-OVERBOOKING.md))가 `reserve()`를
 > 직접 호출해 오버부킹을 재현했다면, 이 문서는 **실제 HTTP 엔드포인트 `POST /api/reservations`에
 > Gatling으로 부하를 걸어** 같은 버그를 재현하고, 동시에 2단계 before/after 비교의 기준선이 될
-> **처리량·응답시간·실패율**을 측정한 기록이다. 전체 계획은 `PROJECT_PLAN.md` 4·5장이 정본이다.
+> **처리량·응답시간·실패율**을 측정한 기록이다. 전체 계획은 [PROJECT_PLAN의 단계별 결과 요약](../PROJECT_PLAN.md#단계별-결과-요약)이 정본이다.
 
 관련 코드: [`BaselineReservationSimulation`](../src/gatling/java/com/interview/reservation/loadtest/BaselineReservationSimulation.java) ·
 [`SeedState`](../src/gatling/java/com/interview/reservation/loadtest/SeedState.java) ·
@@ -122,22 +122,17 @@ docker compose up -d          # MySQL:3306 / Redis:6379
 리포트: `build/reports/gatling/<sim>-<timestamp>/index.html` (TPS·응답시간 분포·상태코드).
 오버부킹 증거는 위 3-2 SQL로 확인한다(`confirmed > capacity` 또는 `remaining < 0`).
 
-> **빌드 메모.** Gatling은 **3.14부터 Netty 4.2**로 올라가는데, Spring Boot 3.5.16 BOM은 Netty를
-> **4.1**로 못박아 충돌한다(`gatlingRun`이 `NoClassDefFoundError`로 죽음). 그래서 Gatling을 **아직
-> Netty 4.1인 3.13 라인(3.13.5.4)** 으로 고정했다 — BOM과 그대로 정렬돼 의존성 조정 코드가 전혀
-> 필요 없다(Java 21·Java DSL 모두 지원). 최신 3.14/3.15를 쓰려면 gatling configuration의 Netty만
-> 4.2로 되돌리는 `resolutionStrategy`가 필요한데, 그 하드코딩을 피하려고 3.13을 택했다
-> ([build.gradle](../build.gradle) 참고).
+> **호환성 메모.** Gatling은 Spring Boot BOM과 Netty 주 버전이 맞는 3.13.5.4로 고정했다.
+> 최신 Gatling으로 올릴 때는 `gatlingRun` 의존성 해석을 함께 검증한다([build.gradle](../build.gradle) 참고).
 
 ---
 
-## 6. 한계와 다음 단계
+## 6. 한계와 후속 검증
 
 - **수치는 하드웨어·타이밍 의존적**이며 실행마다 다르다. 요점은 절대치가 아니라 "세 실패 모드가 실재하고,
   HTTP 부하에서 상시로 드러난다"는 성질이다.
 - **데드락은 baseline의 부작용이지 방어가 아니다.** 오히려 정상 거절(409)조차 못 만드는 카운터 붕괴가
   본질 문제다.
-- **2단계 방어**는 `PROJECT_PLAN.md` 3장 순서(UNIQUE → 조건부 UPDATE → 락)로 도입하고,
-  **이 시뮬레이션을 그대로 재사용**해 동일 부하에서 before/after를 비교한다. 조건부
-  UPDATE(`SET remaining = remaining - 1 WHERE remaining > 0`)는 읽기·쓰기를 원자적 한 방으로 합쳐
-  오버부킹·lost update·S→X 데드락을 동시에 없앤다.
+- **2단계 방어**는 [방어 선택 원칙](../PROJECT_PLAN.md#방어-선택-원칙)의 순서(UNIQUE → 조건부 UPDATE → 락)로 도입했고,
+  **이 시뮬레이션을 그대로 재사용**해 동일 부하에서 before/after를 비교했다. 최종 결과는
+  [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md)에 있다.

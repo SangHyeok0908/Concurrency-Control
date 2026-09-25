@@ -161,7 +161,7 @@ V2 UNIQUE는 테이블 전역 제약이라 모든 경로에서 데이터를 지�
 
 baseline과 ①의 확정 예약 중앙값은 100석 중 9석과 7석뿐이고, KO 중앙값은 111건과 113건이다.
 넘칠 만큼 요청이 커밋되지 못한 것이다. 이 경로의 FK 공유→배타 락 승격 데드락은
-[1단계](STEP1-BASELINE-OVERBOOKING.md#5-왜-http-500이-77나왔나--fk-잠금-승격-데드락)가 이미
+[1단계](STEP1-BASELINE-OVERBOOKING.md#fk-lock-upgrade-deadlock)가 이미
 원인을 재현했다. 새 프로필은 성능 오염을 막으려고 root 로그를 끄므로 이번 60행에는 로그 건수를
 별도 지표로 싣지 않는다.
 

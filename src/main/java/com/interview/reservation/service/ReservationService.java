@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code @Lock(PESSIMISTIC_WRITE)}, 조건부 UPDATE({@code WHERE remaining > 0}),
  * {@code @Version}, 재시도, {@code synchronized} 를 여기 추가하지 말 것. 그렇게 하면
  * 재현하려는 레이스 컨디션이 사라진다. 방어 수단은 2단계에서 별도 구현으로 도입해 이
- * baseline 과 벤치마크한다. (근거: PROJECT_PLAN.md 4장, CLAUDE.md)
+ * baseline 과 벤치마크한다. (근거: PROJECT_PLAN.md의 단계별 결과 요약, AGENTS.md)
  *
  * <p>2단계에서 도입한 {@link ReservationStrategy} 를 <b>직접 구현</b>한다({@code key()="baseline"}).
  * 즉 이 클래스가 곧 baseline 전략이다 — 별도 어댑터 없이 {@code /api/reservations/baseline} 로도

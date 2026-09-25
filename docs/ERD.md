@@ -1,7 +1,7 @@
 # ERD — 선착순 면접 예약 시스템
 
 > 이 프로젝트의 스키마는 **한 번에 완성되지 않는다.** 1단계는 의도적으로 방어 장치가 없는 상태로 출발해
-> 동시성 버그를 재현하고, 방어 수단은 `PROJECT_PLAN.md` 3장의 순서대로 스키마에 하나씩 추가된다.
+> 동시성 버그를 재현하고, 방어 수단은 [PROJECT_PLAN의 방어 선택 원칙](../PROJECT_PLAN.md#방어-선택-원칙)에 따라 스키마에 하나씩 추가된다.
 > 따라서 이 문서는 **최종 스키마**와 **각 요소가 도입되는 단계**를 함께 표기한다.
 
 ---
@@ -39,10 +39,9 @@ erDiagram
     }
 ```
 
-> **`IDEMPOTENCY_KEY` 테이블은 관계도에서 뺐다(2026-07-17).** 최초 설계에는 있었으나 **도입하지 않기로
-> 판단**했다 — 이 도메인은 (지원자, 슬롯) 자연 키가 요청의 정체성을 이미 고정한다. 설계 자체는 미채택
-> 기록으로 [2.4](#idempotency-key-table)에 남겨 뒀다.
-> 판단 근거: [브랜치 전략 ③](STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key).
+> **`IDEMPOTENCY_KEY` 테이블은 도입하지 않았다(2026-07-17).** 이 도메인에서는
+> `(applicant_id, slot_id)` 자연 키가 요청의 정체성을 고정하고 UNIQUE가 이를 보장한다.
+> 판단 근거는 [브랜치 전략 ③](STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key)다.
 
 관계 요약
 
@@ -115,41 +114,16 @@ erDiagram
 FK는 유지한다 — FK는 참조 무결성 제약이지 동시성 방어 수단이 아니고, 없으면 오히려 실험 데이터가 오염된다.
 
 <a id="idempotency-key-table"></a>
-### 2.4 `idempotency_key` — 멱등성 키 (**미채택**)
+### 2.4 멱등성 키 — **미채택**
 
-> **이 테이블은 만들지 않는다.** 아래는 최초 설계 그대로의 기록이며, 마이그레이션도 엔티티도 없다.
-> 왜 접었는지는 이 절 끝의 "미채택 사유"에 있다.
+별도 `idempotency_key` 테이블·Redis 설계는 구현하지 않았다. 예약에서는 `(applicant_id, slot_id)`가
+자연 키이므로 같은 요청의 중복 판정을 `UNIQUE`로 이미 수행한다. 응답 유실 뒤 재시도에 기존 결과를
+반환하는 문제는 남지만, 이는 별도 키가 아니라 API 응답 계약의 문제다. 전체 판단은
+[브랜치 전략 ③](STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key)를 따른다.
 
-| 컬럼 | 타입 | 제약 |
-|---|---|---|
-| `idempotency_key` | VARCHAR(64) | PK (클라이언트가 생성한 UUID) |
-| `applicant_id` | BIGINT | NOT NULL, FK → `applicant.id` |
-| `request_hash` | VARCHAR(64) | NOT NULL (요청 본문 해시) |
-| `status` | VARCHAR(20) | NOT NULL (`IN_PROGRESS` / `COMPLETED`) |
-| `reservation_id` | BIGINT | NULL, FK → `reservation.id` |
-| `created_at` | DATETIME(6) | NOT NULL |
-| `expires_at` | DATETIME(6) | NOT NULL |
-
-동작: 요청이 들어오면 먼저 이 테이블에 `IN_PROGRESS`로 INSERT를 시도한다.
-**PK 충돌 자체가 "중복 요청"의 판정**이다 — 별도 조회가 필요 없고, 조회-후-삽입의 레이스도 없다.
-충돌 시 기존 행의 `status`를 본다. `COMPLETED`면 `reservation_id`로 이전 결과를 그대로 반환하고,
-`IN_PROGRESS`면 첫 요청이 아직 처리 중이므로 409를 반환한다.
-
-`request_hash`는 같은 키로 **다른 내용**의 요청이 오는 경우(클라이언트 버그)를 잡기 위한 것이다.
-`expires_at`은 TTL — 이 테이블은 무한히 자라면 안 되고, 배치로 만료 행을 지운다.
-
-> Redis `SETNX` + TTL로 대체 가능하다. 테이블 방식은 예약과 **같은 트랜잭션에 묶을 수 있다**는 것이
-> 결정적 장점이고(Redis는 DB 트랜잭션 롤백과 함께 되돌아가지 않는다), 대신 DB 부하를 더 준다.
-
-**미채택 사유 (2026-07-17).** 위 설계의 핵심은 "PK 충돌 자체가 중복 요청의 판정"이다. 그런데 이 스키마에는
-**이미 그 역할을 하는 키가 있다** — `UNIQUE(applicant_id, slot_id)`. 클라이언트가 UUID를 발급해 요청의
-정체성을 알려줘야 하는 것은 결제·송금처럼 요청 내용만으로 중복 여부를 판별할 수 없는 연산이지만, 예약은
-(지원자, 슬롯) 쌍이 곧 그 요청이다. 같은 판정을 두 번 구현하는 셈이라 테이블도 Redis도 도입하지 않았다.
-`request_hash`·`expires_at`·만료 배치가 통째로 불필요해진다.
-
-남는 빈틈은 하나뿐이고 작다: `COMPLETED` 행에서 이전 결과를 되돌려주는 동작이 없으므로, 응답을 못 받고
-재시도한 클라이언트는 `200 + 기존 예약`이 아니라 `409`를 받는다. 이건 스키마 문제가 아니라 API 응답 설계
-문제다. 전체 근거: [브랜치 전략 ③](STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key).
+[`V1` 마이그레이션](../src/main/resources/db/migration/V1__baseline_schema_without_guards.sql) 상단의
+“2-1단계에서 추가” 주석은 이 결정을 내리기 전의 계획 기록이다. 이미 적용된 Flyway 파일은 체크섬과
+실험 이력을 보존하기 위해 수정하지 않으며, 현재 결정은 이 절과 브랜치 전략을 따른다.
 
 ---
 
@@ -172,9 +146,7 @@ UPDATE 하나다([근거](STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock)).
 
 ---
 
-## 4. 열린 설계 질문
-
-곧바로 답을 내지 않고, 해당 단계에서 근거를 갖고 결정한다.
+## 4. 후속 범위와 제약
 
 **`UNIQUE(applicant_id, slot_id)`와 예약 취소가 충돌한다.**
 취소 후 재예약을 허용하면, `CANCELED` 행이 남은 상태에서 UNIQUE가 새 `CONFIRMED` 행을 막는다.
@@ -183,5 +155,5 @@ UPDATE 하나다([근거](STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock)).
 증명하려는 논지와 무관하고, 스코프만 키운다.
 
 **`reservation`이 아니라 `interview_slot`에 카운터를 두면 슬롯 행이 핫스팟이 된다.**
-같은 슬롯에 몰린 모든 요청이 한 행을 두고 경쟁한다. 2-2단계 벤치마크에서 락 방식별 처리량 차이가
-가장 크게 벌어지는 지점이 여기이며, 실제로 그렇게 측정되는지 확인한다.
+같은 슬롯에 몰린 모든 요청이 한 행을 두고 경쟁한다. 현재 벤치마크는 이 핫스팟에서 전략별 처리량과
+가용성을 비교한 결과를 [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md)에 보존한다.

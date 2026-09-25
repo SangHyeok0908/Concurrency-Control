@@ -1,269 +1,159 @@
 # 선착순 면접 예약 시스템 — 동시성 제어 실험
 
-> 단순 예약 기능 구현이 아니라, **동시성 문제를 의도적으로 재현하고 여러 해결책을 비교 검증하는 실험형 프로젝트**입니다.
+> 단순 예약 기능이 아니라, 동시성 문제를 의도적으로 재현하고 여러 방어 수단을 같은 조건에서 비교해 최종 선택의 근거를 남기는 실험형 프로젝트입니다.
 
-학부 시절 동아리 지원자 관리 서비스에서 면접 일정을 선착순으로 예약하는 기능을 만든 적이 있습니다. 당시엔 동시성 문제(중복 예약, 정원 초과)를 실제로 겪지 않았지만, 돌이켜보면 언제 터져도 이상하지 않은 코드였습니다. 운이 좋았을 뿐입니다. 이 프로젝트는 그 코드를 **제대로 다시 만드는** 리벤지 프로젝트입니다. 문제를 직접 재현하고, 여러 해결책을 비교 검증하며, 근거를 가지고 최종 방식을 선택하는 과정 전체를 기록합니다.
+학부 동아리 지원자 관리 서비스의 선착순 면접 예약 기능에서 출발했습니다. 당시에는 동시성 문제가 드러나지 않았지만, 검증되지 않았을 뿐 언제든 정원 초과와 중복 예약이 생길 수 있는 구조였습니다. 이 프로젝트는 그 문제를 다시 만들고 측정 가능한 근거로 해법을 고르는 포트폴리오입니다.
 
-전체 기획은 [`PROJECT_PLAN.md`](PROJECT_PLAN.md), 데이터 모델은 [`docs/ERD.md`](docs/ERD.md)에 있습니다.
-
----
+기획과 판단 기준은 [`PROJECT_PLAN.md`](PROJECT_PLAN.md), 브랜치별 진행 현황은 [`docs/STEP2-3-BRANCH-STRATEGY.md`](docs/STEP2-3-BRANCH-STRATEGY.md), 데이터 모델은 [`docs/ERD.md`](docs/ERD.md)에 있습니다.
 
 ## 다루는 문제
 
-동시성 문제를 **두 종류로 분리**하는 것이 이 프로젝트의 출발점입니다. 둘은 원인도 해결책도 다릅니다.
-
-| 문제 | 원인 | 해결책 |
+| 문제 | 원인 | 방어 |
 |---|---|---|
-| 같은 사용자가 요청을 두 번 보냄 (더블클릭, 네트워크 재시도) | 요청 자체의 중복 | 요청의 정체성을 고정하는 키 — 여기서는 자연 키 `UNIQUE(applicant_id, slot_id)` |
-| 다른 사용자들이 동시에 마지막 자리를 두고 경쟁 | 데이터 레이스 컨디션 | 조건부 UPDATE / 락 |
+| 같은 사용자의 중복 요청 | 더블클릭·네트워크 재시도 | 자연 키 `UNIQUE(applicant_id, slot_id)` |
+| 다른 사용자의 마지막 자리 경쟁 | 데이터 레이스 | 조건부 UPDATE 또는 락 |
 
-락만 구현하면 경쟁은 막아도 중복 요청은 못 막습니다. 실무에서는 이 두 문제가 항상 함께 옵니다.
-
-기획 당시에는 위 첫 행의 해법으로 **멱등성 키**를 넣을 계획이었지만, 실제로 ①을 구현하고 나서 **도입하지 않기로 판단했습니다.** 이 도메인에서는 (지원자, 슬롯) 쌍이 그 자체로 요청의 정체성이라 클라이언트가 별도 키를 발급할 이유가 없기 때문입니다. 멱등성 키가 꼭 필요한 것은 결제·송금처럼 *요청 내용만으로 "같은 요청"인지 판별할 수 없는* 연산입니다. ([판단 근거 전문](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key))
-
-## 방어 전략 (가벼운 것부터)
-
-핵심 서사는 `가장 단순한 도구에서 시작했고, 그것이 부족해지는 지점에서만 더 무거운 도구를 꺼냈다`입니다.
-
-| 순서 | 방어 수단 | 막는 문제 |
-|---|---|---|
-| 1 | `UNIQUE(applicant_id, slot_id)` | 중복 예약 (DB 레벨 최후 방어선) — 자연 키가 멱등성 키를 겸합니다 |
-| 2 | 조건부 `UPDATE ... WHERE remaining > 0` | 정원 초과(오버부킹) |
-| ~~3~~ | ~~멱등성 키~~ | **생략** — 1이 같은 문제를 이미 덮습니다 ([근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key)) |
-| 3 | 비관적 락 / 낙관적 락 | 여러 단계·여러 테이블에 걸친 복잡한 트랜잭션 |
-| ~~4~~ | ~~분산 락 (Redisson)~~ | **생략** — 임계 구역이 DB 밖으로 나가지 않습니다 ([근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock)) |
-
-락(비관적 / 낙관적)은 **조건부 UPDATE만으로 부족해지는 지점을 보여주기 위해** 배치합니다. 처음부터, 그리고 끝내 분산 락을 꺼내지 않은 이유와 최종적으로 무엇을 왜 선택했는지가 이 프로젝트의 핵심 논증입니다. (근거 정리: 아래 [트레이드오프 분석](#트레이드오프-분석) 참조)
-
-**분산 락은 구현하지 않기로 판단했습니다(2026-09-04).** 분산 락은 동시성 제어를 **데이터베이스 하나로 끝낼 수 없을 때** — 임계 구역 안에서 외부 결제 API, 다른 서비스의 DB, 정확히 한 번만 보내야 하는 알림처럼 **DB 밖의 것까지 함께** 조율해야 할 때 — 쓰는 도구입니다. 이 도메인의 임계 구역은 슬롯 한 행의 `UPDATE` 하나이고 공유 상태는 단일 MySQL 한 곳에만 있으므로, 서버 인스턴스를 늘려도 그 명분이 생기지 않습니다. ([판단 근거 전문](docs/STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock))
+락은 정원 경쟁을 막아도 중복 요청을 해결하지 못합니다. 이 도메인에서는 `(applicant, slot)` 자체가 요청의 정체성이므로 별도 멱등성 키를 도입하지 않았습니다. 자세한 판단은 [브랜치 전략 ③](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key)를 봅니다.
 
 ## 기술 스택
 
 | 구분 | 기술 |
 |---|---|
 | 언어 / 프레임워크 | Java 21, Spring Boot 3.5.16 |
-| ORM | Spring Data JPA |
-| DB | MySQL 8.0 |
-| 캐시 | Redis 7 (컨테이너만 기동 — 분산 락 생략으로 2단계에서는 사용처가 없습니다) |
-| 부하 테스트 | Gatling (1단계 문제 재현부터 도입) |
-| 빌드 | Gradle (wrapper) |
-
----
+| ORM / DB | Spring Data JPA, MySQL 8.0 |
+| 캐시 | Redis 7 (컨테이너만 기동) |
+| 부하 테스트 / 빌드 | Gatling, Gradle wrapper |
 
 ## 로컬 실행 방법
 
 **요구사항**: JDK 21, Docker.
 
 ```bash
-# 1. MySQL + Redis 기동
 docker compose up -d
-docker compose ps          # 두 컨테이너가 healthy 인지 확인
-
-# 2. 빌드 + 테스트
-./gradlew build            # PowerShell/cmd 에서는 gradlew.bat
-
-# 3. 앱 실행
+docker compose ps
+./gradlew build
 ./gradlew bootRun
 ```
 
-접속 기본값은 `application.yml`에 맞춰져 있어 컨테이너만 띄우면 그대로 붙습니다. 포트 등을 바꾸려면 환경변수(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`)로 덮어쓰면 됩니다. 실험을 같은 조건에서 다시 돌리려면 `docker compose down -v`로 볼륨까지 초기화합니다.
+기본 접속값은 `application.yml`에 맞춰져 있습니다. 필요하면 Spring 표준 환경 변수
+`SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`,
+`SPRING_DATA_REDIS_HOST`, `SPRING_DATA_REDIS_PORT`로 덮어쓸 수 있습니다. 실험 환경 초기화에는
+`docker compose down -v`를 사용합니다.
 
 ## 스키마
 
-스키마는 Hibernate가 생성하지 않고(`ddl-auto: validate`) **Flyway 마이그레이션으로 버전 관리**합니다. 방어 수단이 단계별로 하나씩 들어오는 과정 자체가 이 프로젝트의 논지이므로, 그 과정이 마이그레이션 이력에 남아야 하기 때문입니다. 테스트도 동일한 마이그레이션을 사용합니다 — 제약이 실제로 지켜지는지가 곧 측정 대상이라, 테스트가 다른 스키마를 보면 안 됩니다.
+스키마는 Hibernate가 아닌 Flyway로 버전 관리합니다. 방어 수단이 들어오는 이력 자체가 실험의 증거이기 때문입니다.
 
 | 버전 | 내용 | 단계 |
 |---|---|---|
-| `V1__baseline_schema_without_guards.sql` | applicant / interview_slot / reservation. **방어 제약 없음** | 1단계 |
-| `V2__add_unique_reservation.sql` | `UNIQUE(applicant_id, slot_id)` — 중복 예약 차단 | 2-1단계 ① |
-| `V3__add_version_to_slot.sql` | `interview_slot.version` (낙관적 락) | 2-2단계 ⑤ |
+| `V1__baseline_schema_without_guards.sql` | applicant / interview_slot / reservation, 방어 제약 없음 | 1단계 |
+| `V2__add_unique_reservation.sql` | `UNIQUE(applicant_id, slot_id)` | 2-1단계 ① |
+| `V3__add_version_to_slot.sql` | `interview_slot.version` | 2-2단계 ⑤ |
 
-② 조건부 UPDATE는 스키마 변경이 없고, ③ 멱등성 키는 생략했으므로 `V3`은 낙관적 락 몫으로 확정입니다.
-
-테이블 정의와 설계 근거는 [`docs/ERD.md`](docs/ERD.md)에 있습니다.
-
----
+조건부 UPDATE는 스키마 변경이 없습니다. 테이블 정의와 근거는 [`docs/ERD.md`](docs/ERD.md)에 있습니다.
 
 ## 실험 결과
 
-> **1단계(방어 없음) 완료 · 2단계 벤치마크 완료 · 3단계 최종 선택 완료.** 2026-09-24에 전용 `benchmark` 프로필로 Hikari 풀 100개와 모든 로그 OFF를 고정하고, 서로 다른 지원자의 정원 경쟁을 60회 다시 측정했습니다. 2026-09-25에는 동일 `(지원자, 슬롯)` 요청 200건을 5개 경로에서 각 5회 보내는 별도 25회 검증을 추가했습니다. 전체 해석은 [`docs/STEP2-DEFENSE-BENCHMARK.md`](docs/STEP2-DEFENSE-BENCHMARK.md), 원시는 [정원 경쟁 60행](docs/benchmark/raw-runs.csv)과 [동일 요청 25행](docs/benchmark/duplicate-runs.csv), 실행 기록은 [정원 경쟁](docs/benchmark/2026-09-24-controlled-run.md)과 [동일 요청](docs/benchmark/2026-09-25-duplicate-request-run.md)에 분리돼 있습니다.
+**1단계 baseline, 2단계 벤치마크, 3단계 최종 선택이 완료되었습니다.** 전용 `benchmark` 프로필로 풀 100개와 로그 OFF를 고정해 서로 다른 지원자의 정원 경쟁을 60회 측정했고, 동일 `(지원자, 슬롯)` 요청 200건을 5개 경로에서 각 5회 검증했습니다. 측정 조건·원시 데이터·해석은 [`docs/STEP2-DEFENSE-BENCHMARK.md`](docs/STEP2-DEFENSE-BENCHMARK.md)에 있습니다.
 
-### 1단계 — 방어 없는 baseline에서 무엇이 깨졌나
+### 1단계 — 방어 없는 baseline
 
-락 없는 `POST /api/reservations`에 **정원 100 슬롯 하나 vs 서로 다른 지원자 500명**을 `atOnceUsers(500)`로 한꺼번에 태우면, 세 가지 실패 모드가 **한 실행에서 동시에** 드러납니다.
+락 없는 `POST /api/reservations`에 정원 100 슬롯과 서로 다른 지원자 500명을 동시에 요청했을 때 다음이 한 실행에서 나타났습니다.
 
-- **오버부킹** — 확정 예약 113건 > 정원 100 (13건 초과).
-- **lost update** — 카운터 `remaining`이 60번만 감소해 40에 갇힘(확정은 113건). 예약 행 수와 카운터가 서로 다른 값으로 둘 다 틀림.
-- **데드락 폭증** — `reserve` 요청의 77%(387/500)가 HTTP 500. `reservation → interview_slot` FK의 S→X 잠금 승격 데드락.
-- **가장 날카로운 관찰** — 409(정원 마감)가 **0건**. lost update로 카운터가 0에 닿지 못해, 앱은 슬롯이 꽉 찼다는 사실 자체를 인지하지 못함.
+- 오버부킹: 예약 113건으로 정원보다 13건 초과
+- lost update: `remaining`은 40인데 예약은 113건
+- 데드락: 500건 중 387건(77%)이 HTTP 500
+- 409는 0건: lost update로 카운터가 0에 닿지 않아 만석을 인식하지 못함
 
-두 단계로 재현했습니다. 서비스 계층에서는 트랜잭션이 1ms 미만이라 **간헐적으로만**(15명 경쟁 시 3~8/10 라운드) 터지고, HTTP 지연이 경쟁 창을 넓히자 **상시**로 드러났습니다. 상세 근거·인터리빙 다이어그램은 [서비스-계층 재현](docs/STEP1-BASELINE-OVERBOOKING.md)과 [Gatling HTTP 부하](docs/STEP1-GATLING-LOADTEST.md)에 있습니다.
+서비스 계층에서는 간헐적이었지만 HTTP 부하가 경쟁 창을 넓히자 상시로 드러났습니다. 근거는 [서비스 계층 재현](docs/STEP1-BASELINE-OVERBOOKING.md)과 [Gatling HTTP 부하](docs/STEP1-GATLING-LOADTEST.md)에 있습니다.
 
 ### Before / After 부하 테스트
 
-방어 5종을 **서로 다른 지원자의 정원 경쟁이라는 같은 시나리오·같은 부하·같은 애플리케이션 설정**으로 두 경합 지점에서 각 5회, 총 60회 측정했습니다. 실행 순서는 라운드 단위 인터리브이고, 응답시간은 **중앙값**, 괄호는 min–max 범위입니다. 노트북 1대의 5회 측정이며 라운드 안 전략 순서는 고정돼 있으므로 절대치보다 범위와 실패율을 함께 봅니다.
+동일 시나리오·부하·애플리케이션 설정으로 각 5회 측정했습니다. 응답시간은 중앙값이며 괄호는 min–max입니다.
 
 **낮은 경합 — `capacity=100`, `contenders=120`**
 
 | 방식 | TPS | 응답시간 (중앙값 / p95) | KO | 데이터 정합성 |
 |---|---|---|---|---|
-| 방어 없음 | 857.1 | 92ms <sub>(74–336)</sub> / 131ms | **111/120** | ⚠️ 100석 중 중앙값 9석만 확정 — 빠른 실패가 지배 |
-| ① UNIQUE | 1081.1 | 85ms <sub>(72–90)</sub> / 108ms | **113/120** | ⚠️ 중앙값 7석만 확정 — 정원 경쟁에는 무력 |
-| ② 조건부 UPDATE | **582.5** | **136ms** <sub>(109–233)</sub> / 194ms | 0 | ✅ 오버부킹 0 · **100석 전부** |
-| ④ 비관적 락 | 560.7 | **136ms** <sub>(125–161)</sub> / 203ms | 0 | ✅ 동일 (저경합 중앙값은 ②와 동률) |
-| ⑤ 낙관적 락 (상한 5) | 364.7 | 262ms <sub>(240–296)</sub> / 316ms | **107/120** | ⚠️ 오버부킹 0이지만 중앙값 **13석** (107건 503) |
-| ⑤ 낙관적 락 (상한 20) | **137.6** | **520ms** <sub>(375–575)</sub> / 777ms | 0 | ✅ 100석 전부 — TPS는 ②의 23.6% |
+| 방어 없음 | 857.1 | 92ms <sub>(74–336)</sub> / 131ms | **111/120** | ⚠️ 중앙값 9석만 확정 |
+| ① UNIQUE | 1081.1 | 85ms <sub>(72–90)</sub> / 108ms | **113/120** | ⚠️ 중앙값 7석만 확정 |
+| ② 조건부 UPDATE | **582.5** | **136ms** <sub>(109–233)</sub> / 194ms | 0 | ✅ 100석 전부 |
+| ④ 비관적 락 | 560.7 | **136ms** <sub>(125–161)</sub> / 203ms | 0 | ✅ 동일 |
+| ⑤ 낙관적 락 (상한 5) | 364.7 | 262ms <sub>(240–296)</sub> / 316ms | **107/120** | ⚠️ 중앙값 13석 |
+| ⑤ 낙관적 락 (상한 20) | **137.6** | **520ms** <sub>(375–575)</sub> / 777ms | 0 | ✅ 100석 전부 |
 
 **극단 경합 — `capacity=1`, `contenders=200`**
 
 | 방식 | TPS | 응답시간 (중앙값 / p95) | KO | 데이터 정합성 |
 |---|---|---|---|---|
-| 방어 없음 | 1652.9 | 74ms <sub>(61–285)</sub> / 112ms | 10 | ❌ 매회 2~3건 확정, 최대 **오버부킹 +2** |
-| ① UNIQUE | 1503.8 | 70ms <sub>(67–124)</sub> / 106ms | 10 | ❌ 매회 2~3건 확정, 최대 **오버부킹 +2** |
+| 방어 없음 | 1652.9 | 74ms <sub>(61–285)</sub> / 112ms | 10 | ❌ 최대 오버부킹 +2 |
+| ① UNIQUE | 1503.8 | 70ms <sub>(67–124)</sub> / 106ms | 10 | ❌ 최대 오버부킹 +2 |
 | ② 조건부 UPDATE | 947.9 | 132ms <sub>(102–221)</sub> / 194ms | 0 | ✅ 오버부킹 0 |
 | ④ 비관적 락 | 1470.6 | 86ms <sub>(72–90)</sub> / 120ms | 0 | ✅ 동일 |
-| ⑤ 낙관적 락 (상한 5·20) | 1639.3 / 1639.3 | 72 / 74ms | 0 | ✅ 동일 — 성공적 슬롯 쓰기는 1회뿐 |
-
-> 1단계 문서의 `contenders=500` 수치와는 **부하 조건이 다릅니다.** ⑦은 ④⑤와 조건을 맞추기 위해 위 두 지점으로 통일했습니다.
+| ⑤ 낙관적 락 (상한 5·20) | 1639.3 / 1639.3 | 72 / 74ms | 0 | ✅ 동일 |
 
 **동일 요청 검증 — `capacity=200`, 같은 `(applicantId, slotId)` 200건**
 
 | 경로 | 실행 | 201 | 409 | 500 | DB 결과 |
 |---|---:|---:|---:|---:|---|
-| baseline | 5 | 5 | 0 | 995 | ✅ 매회 예약 1건·좌석 1개 소모 |
-| ① UNIQUE | 5 | 5 | **995** | 0 | ✅ 매회 예약 1건·좌석 1개 소모 |
-| ② 조건부 UPDATE | 5 | 5 | 0 | 995 | ✅ 매회 예약 1건·좌석 1개 소모 |
-| ④ 비관적 락 | 5 | 5 | 0 | 995 | ✅ 매회 예약 1건·좌석 1개 소모 |
-| ⑤ 낙관적 락 | 5 | 5 | 0 | 995 | ✅ 매회 예약 1건·좌석 1개 소모 |
+| baseline | 5 | 5 | 0 | 995 | ✅ 예약 1건·좌석 1개 |
+| ① UNIQUE | 5 | 5 | **995** | 0 | ✅ 예약 1건·좌석 1개 |
+| ② 조건부 UPDATE | 5 | 5 | 0 | 995 | ✅ 예약 1건·좌석 1개 |
+| ④ 비관적 락 | 5 | 5 | 0 | 995 | ✅ 예약 1건·좌석 1개 |
+| ⑤ 낙관적 락 | 5 | 5 | 0 | 995 | ✅ 예약 1건·좌석 1개 |
 
-전역 V2 UNIQUE는 모든 경로에서 중복 행과 추가 좌석 소모를 막았다. 그러나 그 제약 위반을 도메인
-409로 번역한 것은 `/unique`뿐이다. 이 25회는 성능 순위가 아니라 **DB 안전성과 HTTP 응답 의미를
-분리한 검증**이며, 원시 상태 분포는 [`duplicate-runs.csv`](docs/benchmark/duplicate-runs.csv)에 있다.
+전역 V2 UNIQUE는 모든 경로에서 중복 행과 추가 좌석 소모를 막았습니다. `/unique`만 제약 위반을 409로 번역합니다. 이는 성능 순위가 아니라 DB 안전성과 HTTP 응답 의미를 분리한 검증입니다.
 
-### 2단계 — 방어를 하나씩 넣으며 관찰한 것
+### 전략별 관찰
 
-`POST /api/reservations/{strategy}`로 방어별 경로를 나란히 두어(baseline은 보존) 같은 부하로 비교할 수 있게 했습니다.
+| 전략 | 결과와 판단 | 상세 근거 |
+|---|---|---|
+| ① UNIQUE | 동일 요청의 DB 중복을 막지만 서로 다른 지원자의 정원 경쟁은 막지 못함 | [문서](docs/STEP2-UNIQUE-CONSTRAINT.md) |
+| ② 조건부 UPDATE | 두 경합 지점에서 오버부킹·KO 0; 현재 불변식을 한 DML로 표현 | [문서](docs/STEP2-CONDITIONAL-UPDATE.md) |
+| ④ 비관적 락 | 정합성은 동일하고 극단 경합에서는 더 빨랐으나, 현재 문제에는 명시적 잠금 구간이 불필요 | [문서](docs/STEP2-PESSIMISTIC-LOCK.md) |
+| ⑤ 낙관적 락 | 오버부킹은 막지만 충돌·재시도 비용 때문에 상한 5는 가용성, 상한 20은 처리량을 잃음 | [문서](docs/STEP2-OPTIMISTIC-LOCK.md) |
+| ③ 멱등성 키 / ⑥ 분산 락 | 현재 도메인의 자연 키·단일 DB 경계에서는 중복 도입이므로 생략 | [③](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key) · [⑥](docs/STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock) |
 
-- **① UNIQUE 제약** — 같은 (지원자, 슬롯) 200건을 동시에 보낸 실제 HTTP 25회 검증에서 모든 경로의 DB 예약은 매번 1건이었고 좌석도 1개만 소모했습니다. `/unique`는 나머지 199건을 409로 번역했습니다. 다만 서로 다른 지원자의 정원 경쟁은 (지원자, 슬롯) 쌍이 매번 달라 **오버부킹을 전혀 막지 못합니다.** ([상세](docs/STEP2-UNIQUE-CONSTRAINT.md) · [HTTP 원시 결과](docs/benchmark/duplicate-runs.csv))
-- **② 조건부 UPDATE** — `UPDATE ... SET remaining = remaining - 1 WHERE id = ? AND remaining > 0` **한 문장**으로 오버부킹이 **결정적으로 0**이 됩니다. 락도 데드락도 재시도도 없습니다. baseline의 "간헐적으로 터짐"과 정면 대비되는 지점입니다. ([상세](docs/STEP2-CONDITIONAL-UPDATE.md))
+## 아키텍처
 
-- **③ 멱등성 키 — 도입하지 않기로 판단** — 기획서에는 3순위 방어로 올려뒀지만, ①을 끝내고 다시 따져 보니 이 도메인에서는 **(지원자, 슬롯) 쌍이 그 자체로 요청의 정체성**이라 클라이언트가 별도 키를 발급할 이유가 없었습니다. 자연 키가 이미 멱등성 키이고, 거기엔 ①의 UNIQUE가 걸려 있습니다. 자연 키로 충분한 자리에 Redis `SETNX`를 얹는 것은 "가벼운 것부터"라는 이 프로젝트의 논지를 스스로 배반하는 일이라 판단해 생략했습니다. ([판단 근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key))
-
-- **④ 비관적 락 — 오버부킹은 막지만 채택하지 않음** — `SELECT ... FOR UPDATE`도 오버부킹을 결정적으로 0으로 만듭니다. 통제 전 예비 측정에서는 저경합 7쌍 중 6쌍에서 ②가 빨랐지만, 통제 재측정에서는 낮은 경합 중앙값이 둘 다 136ms였고 짝비교는 ④ 3승·② 1승·동률 1, 극단 경합은 ④ 5승이었습니다. 따라서 **락이 느리다는 근거로 배제하지 않습니다.** 현재 불변식이 단일 행의 `remaining > 0` 조건과 감소 한 문장으로 표현되므로, 더 작은 상태 전이인 ②를 선택합니다. 만석 중심 SLO라면 ④는 유효 후보이며 `existsById` A/B 후 다시 비교해야 합니다. ([예비 측정](docs/STEP2-PESSIMISTIC-LOCK.md) · [통제 종합](docs/STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic))
-
-- **⑤ 낙관적 락 — 오버부킹은 막지만 채택하지 않음** — `@Version` + 백오프 재시도도 오버부킹을 0으로 만듭니다. 그러나 낙관적 락의 경합은 요청 수보다 **같은 행에 성공적으로 쓰는 횟수**에 좌우돼, `capacity=100`이 ⑤에게 최악입니다. 상한 5는 중앙값 13석만 채우고 107건을 503으로 끝냈습니다(버전 충돌 566회). 상한 20은 100석을 채웠지만 응답 520ms·TPS 137.6, 충돌 735회로 ② TPS의 23.6%였습니다. 백오프 방식은 별도 예비 실험으로 고르고, 최종 수치는 통제 종합에서 다시 확인했습니다. ([구현·백오프](docs/STEP2-OPTIMISTIC-LOCK.md) · [통제 종합](docs/STEP2-DEFENSE-BENCHMARK.md#5-⑤-낙관적-락이-치르는-비용))
-
-- **⑥ 분산 락 — 도입하지 않기로 판단** — 분산 락은 동시성 제어가 **DB 하나로 끝나지 않을 때** 쓰는 도구입니다. 임계 구역에 외부 결제 API·다른 저장소·정확히 한 번 보내야 하는 알림이 들어와야 DB 트랜잭션의 원자성이 닿지 못하는 구간이 생기고, 그때 비로소 애플리케이션 레벨 뮤텍스가 필요합니다. 이 도메인에는 그 구간이 없습니다 — 임계 구역은 슬롯 한 행의 UPDATE 하나이고, 공유 상태는 단일 MySQL 한 곳뿐이라 인스턴스를 늘려도 마찬가지입니다. 같은 시나리오에서 구현했다면 결과는 "오버부킹 0(②·④·⑤와 동률) + Redis 왕복만큼 더 느림"으로 정해져 있고, 그 숫자는 분산 락에 대해 아무것도 증명하지 못합니다. ([판단 근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock))
-
-- **⑦ 벤치마크 — 정원 경쟁 60회와 동일 요청 25회를 분리** — 기존 기본 프로필 결과에는 좁은 기본 풀과 SQL·예외 로그 비용이 섞여 있었습니다. 전용 프로필로 풀 100개를 미리 준비하고 모든 로그를 끈 뒤 다시 재자, 기존의 “낮은 경합에서 ② 5/5승”은 재현되지 않았습니다. 정원 경쟁 정본은 (1) baseline·①이 극단 경합 5회 모두 오버부킹, (2) baseline·①의 낮은 경합 오버부킹 0은 대량 KO에 가려진 것, (3) ②와 ④의 낮은 경합 중앙값은 136ms 동률이고 극단 경합은 ④ 5/5승이라는 사실을 보여줍니다. 별도 동일 요청 정본은 모든 경로에서 DB 행 1건을 보장하되 `/unique`만 중복을 409로 번역한다는 사실을 보여줍니다. ([상세](docs/STEP2-DEFENSE-BENCHMARK.md))
-
-여기서 나온 정직한 발견 하나: **락은 오버부킹을 조건부 UPDATE가 "못 막아서" 꺼내는 것이 아닙니다.** 이 문제 모양(단일 행 · 산술 델타 · 한 컬럼 가드)에서는 조건부 UPDATE가 불변식을 가장 작게 표현합니다. 그렇다고 항상 더 빠른 것은 아니며, 이번 통제 측정의 ④는 같거나 빨랐습니다. 락은 다중 행 불변식이나 애플리케이션 계산처럼 한 조건부 DML로 접을 수 없을 때 우선 검토하고, DB 밖 임계 구역은 이 도메인에 없으므로 ⑥을 구현하는 대신 **전제로 남겼습니다.**
-
-### 아키텍처 다이어그램
-
-1단계의 락 없는 경로는 재현 자산으로 보존하고, 2단계의 방어는 `ReservationStrategy` 구현체로 나란히 추가했습니다. `POST /api/reservations/{strategy}`가 같은 요청을 각 전략으로 보내므로, 방어 수단만 바꾼 before/after 비교가 가능합니다.
+1단계의 락 없는 경로는 재현 자산으로 보존하고, 2단계 방어는 `ReservationStrategy` 구현체로 나란히 추가했습니다. `POST /api/reservations/{strategy}`로 같은 요청을 각 전략에 보내 방어 수단만 바꾼 비교가 가능합니다.
 
 ```mermaid
 sequenceDiagram
-    autonumber
     actor Client
     participant Controller as ReservationController
     participant Resolver as ReservationStrategyResolver
-    participant Strategy as 선택된 ReservationStrategy
+    participant Strategy as ReservationStrategy
     participant Slot as interview_slot
     participant Reservation as reservation
 
-    alt 1단계 재현 경로
-        Client->>Controller: POST /api/reservations
-        Controller->>Strategy: ReservationService.reserve()
-    else 2단계 비교 경로
-        Client->>Controller: POST /api/reservations/{strategy}
-        Controller->>Resolver: resolve(strategy)
-        Resolver-->>Controller: baseline / unique / conditional / pessimistic / optimistic
-        Controller->>Strategy: reserve(applicantId, slotId)
-    end
-
-    alt baseline / ① UNIQUE
-        Strategy->>Slot: SELECT remaining
-        Strategy->>Strategy: isFull 검사 후 메모리에서 감소
-        Strategy->>Reservation: IDENTITY INSERT로 FK 공유 락 획득
-        Strategy->>Slot: flush 시 dirty-check UPDATE로 배타 락 요청
-        Note over Strategy,Slot: 경쟁 창 + 공유→배타 락 승격 데드락
-    else ② 조건부 UPDATE — 최종 선택
-        Strategy->>Slot: UPDATE ... SET remaining = remaining - 1<br/>WHERE id = ? AND remaining > 0
-        alt 갱신 1행
-            Strategy->>Reservation: INSERT
-        else 갱신 0행
-            Strategy->>Slot: existsById로 404 / 409 구분
-        end
-    else ④ 비관적 락
+    Client->>Controller: POST /api/reservations/{strategy}
+    Controller->>Resolver: resolve(strategy)
+    Resolver-->>Controller: baseline / unique / conditional / pessimistic / optimistic
+    Controller->>Strategy: reserve(applicantId, slotId)
+    alt conditional
+        Strategy->>Slot: UPDATE ... WHERE remaining > 0
+        Strategy->>Reservation: INSERT (갱신 1행)
+    else pessimistic
         Strategy->>Slot: SELECT ... FOR UPDATE
-        Strategy->>Slot: 잠금을 보유한 채 감소
         Strategy->>Reservation: INSERT
-    else ⑤ 낙관적 락
-        loop 각 시도를 REQUIRES_NEW로 상한까지 실행
-            Strategy->>Slot: SELECT id, remaining, version
-            alt version 일치
-                Strategy->>Slot: UPDATE ... WHERE id = ? AND version = ? + flush
-                Strategy->>Reservation: INSERT
-            else version 충돌 / 데드락
-                Slot-->>Strategy: 현재 시도 rollback
-                Strategy->>Strategy: 지수 백오프 + 지터
-            end
-        end
-        Note over Strategy: 성공 즉시 종료, 상한 소진 시 503
+    else optimistic
+        Strategy->>Slot: SELECT + version UPDATE
+        Strategy->>Strategy: 충돌 시 백오프 재시도
+        Strategy->>Reservation: INSERT
+    else baseline / unique
+        Strategy->>Slot: read-check-decrease
+        Strategy->>Reservation: INSERT
     end
-
-    Note over Slot,Reservation: V2 UNIQUE(applicant_id, slot_id)는 모든 예약 INSERT의 최후 방어선
-    Strategy-->>Controller: 예약 결과 또는 도메인 예외
-    Controller-->>Client: 201 / 4xx / 5xx
+    Note over Reservation: V2 UNIQUE(applicant_id, slot_id)는 모든 INSERT의 최후 방어선
 ```
 
-`UNIQUE`는 `/unique` 경로에만 존재하는 장치가 아니라 `reservation` 테이블 전체에 적용됩니다. `/unique` 경로는 그 제약 위반을 명시적으로 409로 번역하는 실험 경로이고, 최종 선택인 `/conditional`도 같은 DB 제약으로 데이터는 보호됩니다. 다만 `/conditional`은 아직 중복 제약 예외를 도메인 응답으로 번역하지 않습니다. 자리가 남아 INSERT까지 가면 처리되지 않은 제약 예외로 500, 이미 만석이면 INSERT 전에 409가 되어 응답이 상태에 따라 달라지므로 아래 후속 과제로 분리했습니다. 낙관적 락만 동일 테이블의 `version` 컬럼을 사용하는 별도 엔티티 매핑을 거치며, 충돌한 시도를 새 트랜잭션으로 다시 실행합니다.
+## 트레이드오프와 최종 선택
 
-### 트레이드오프 분석
+**최종 선택은 `UNIQUE` + 조건부 UPDATE입니다.** 두 장치는 경쟁하지 않습니다. UNIQUE는 동일 `(applicant_id, slot_id)` 중복을, 조건부 UPDATE는 마지막 자리 경쟁의 정원 불변식을 맡습니다.
 
-#### 최종 선택 — `UNIQUE` + 조건부 UPDATE
+조건부 UPDATE는 성능 1위라서가 아니라, **단일 슬롯 행·단순 산술 차감·`remaining > 0` 가드**를 한 문장으로 표현하는 가장 작은 메커니즘이어서 선택했습니다. 통제 측정에서 비관적 락은 낮은 경합에서 동률, 극단 경합에서는 더 빨랐습니다. 따라서 비관적 락을 느리다는 이유로 배제하지 않으며, 다중 행·다단계 트랜잭션에서는 다시 후보가 됩니다. 낙관적 락은 실제 충돌이 드물고 재시도가 싼 경우에, 분산 조율은 외부 결제·다른 저장소·정확히 한 번 알림처럼 임계 구역이 DB 밖으로 확장될 때 검토합니다.
 
-두 장치는 경쟁 관계가 아니라 **서로 다른 불변식**을 맡습니다. `UNIQUE(applicant_id, slot_id)`는 같은 지원자·같은 슬롯의 중복 예약을 DB에서 차단하고, 조건부 `UPDATE`는 서로 다른 지원자가 마지막 자리를 두고 경쟁할 때 정원 확인과 감소를 SQL 한 문장으로 묶습니다.
+트래픽이 늘어도 공유 상태가 단일 MySQL에 남는 한 조건부 UPDATE와 UNIQUE의 원자성은 유지됩니다. 먼저 인기 슬롯 핫스폿과 DB 쓰기 한계를 측정하고, 애플리케이션 확장·읽기 분리·DB 용량을 검토합니다. 한 인기 슬롯의 마지막 자리는 어떤 방식이든 직렬화해야 하므로, 과부하는 admission control이나 대기열로 흡수합니다.
 
-서로 다른 지원자의 정원 경쟁 60회에서 조건부 UPDATE는 두 경합 지점 모두 **오버부킹 0, KO 0**이었고 정원도 전부 채웠습니다. 별도 동일 요청 25회에서는 전역 UNIQUE가 모든 경로의 예약 행과 좌석 소모를 1로 제한했습니다. 낮은 경합에서는 ②와 ④의 평균 응답 중앙값이 모두 136ms였고, 극단 경합에서는 ④가 더 빨랐습니다. 따라서 ②를 “성능 1위”로 선택하지 않습니다. 현재 도메인의 모양인 **단일 슬롯 행 · 단순 산술 차감 · `remaining > 0` 한 컬럼 가드**를 한 DML로 직접 표현하는 가장 작은 메커니즘이라 선택합니다. 전체 측정 조건과 원시 수치는 [⑦ 방어 전략 벤치마크](docs/STEP2-DEFENSE-BENCHMARK.md)에 있습니다.
-
-| 수단 | 맡는 문제와 실측 비용 | 이 프로젝트의 판단 | 다시 검토할 경계 |
-|---|---|---|---|
-| ① `UNIQUE` | 동일 `(applicant_id, slot_id)` 중복은 막지만, 서로 다른 지원자의 정원 경쟁에는 무력했습니다. 극단 경합 5회 모두 정원 1에 예약 2~3건이 확정됐습니다. | **유지.** ②의 대체재가 아니라 중복 전용 직교 방어입니다. | 자연 키가 사라지는 복수 예약이나 결제처럼 같은 내용의 요청을 별개로 식별해야 할 때 멱등성 키를 검토합니다. |
-| ② 조건부 UPDATE | 두 지점 모두 정합성과 가용성을 충족했고, 별도 스키마·재시도 상한·추가 인프라가 없습니다. | **채택.** 현재 불변식을 표현하는 가장 작은 도구입니다. | 다중 행 불변식, 애플리케이션 계산, 여러 단계 트랜잭션 때문에 한 SQL 문으로 접을 수 없을 때입니다. |
-| ④ 비관적 락 | 정합성·가용성은 ②와 같았습니다. 낮은 경합 중앙값은 136ms 동률(② 1승·④ 3승·동률 1), 극단 경합은 ④가 5/5 빨랐습니다. `existsById` 추가 조회는 극단 결과와 방향이 맞지만 분리 A/B는 아직입니다. | **미채택.** 성능 열세 때문이 아니라 현재 불변식에 명시적 read→check→decrease 잠금 구간이 필요 없기 때문입니다. 만석 중심 SLO라면 재검토합니다. | 충돌이 많고, 다단계·다중 행 불변식을 한 트랜잭션에서 보호해야 하거나 극단 거절 지연이 핵심일 때입니다. |
-| ⑤ 낙관적 락 | `capacity=100`에서 버전 충돌 중앙값은 상한 5·20 각각 566·735회였습니다. 상한 5는 중앙값 13석만 채우고 107건을 503으로 끝냈으며, 상한 20은 전부 채웠지만 520ms·137.6 TPS로 ② TPS의 23.6%였습니다. | **미채택.** 측정한 두 상한에서는 가용성이나 성능 중 하나를 잃었습니다. | 실제 충돌이 드물고 실패한 연산의 재시도가 값쌀 때입니다. |
-| ③ 멱등성 키 | 자연 키가 요청의 정체성을 이미 고정하고 ①이 이를 강제하므로 별도 Redis 키는 같은 문제를 중복해서 풉니다. | **생략.** 생략 자체가 가벼운 해법부터 쓴다는 원칙의 결과입니다. | 결제·송금처럼 같은 내용도 서로 다른 요청일 수 있거나 한 지원자의 동일 슬롯 복수 예약을 허용할 때입니다. |
-| ⑥ 분산 락 | 공유 상태와 임계 구역이 단일 MySQL의 한 행 UPDATE 안에서 끝납니다. 같은 실험에 Redis 왕복을 더해도 새로운 판단 근거가 생기지 않습니다. | **생략.** 애플리케이션 인스턴스 수만 늘어나는 것은 도입 근거가 아닙니다. | 외부 결제, 다른 저장소, 정확히 한 번 보내야 하는 알림처럼 DB 밖 자원까지 한 임계 구역에서 조율해야 할 때입니다. |
-
-④가 통제 측정에서 같거나 빨랐다는 사실은 숨기지 않습니다. 성공 경로의 쿼리 수는 ②가 3개, ④가 4개지만 거절 경로는 ②가 3개, ④가 2개입니다. `capacity=1`에서는 200건 중 199건이 거절되므로, ②에만 붙는 **404/409 구분용 추가 조회**는 극단 결과와 방향이 맞습니다. 다만 해당 조회만 제거한 A/B가 없고 저경합 결과도 이 설명만으로 풀리지 않으므로 인과로 확정하지 않습니다. ②의 선택 근거는 성능 우위가 아니라 한 조건부 DML로 현재 불변식을 표현하는 단순성입니다.
-
-#### 트래픽이 100배가 된다면
-
-이 벤치마크는 노트북 한 대에서 각 조건을 5회 측정한 비교 실험이므로, 582.5 TPS를 100배 트래픽에 그대로 외삽하지 않습니다. 대신 병목과 도메인 경계가 실제로 어떻게 변했는지를 다시 측정합니다.
-
-1. **도메인이 그대로라면 방어도 유지합니다.** 애플리케이션 인스턴스를 수평 확장해도 `remaining`의 공유 상태가 단일 MySQL에 있는 한 조건부 UPDATE와 UNIQUE의 원자성은 유지됩니다. 먼저 쓰기 DB의 처리 한계와 인기 슬롯 한 행의 핫스폿을 별도 부하 시험으로 측정하고, 애플리케이션 확장·읽기 경로 분리·DB 용량을 순서대로 검토합니다. 서로 독립적인 슬롯이 많다면 슬롯 키 기준 분할로 쓰기를 나눌 수 있지만, **한 인기 슬롯의 마지막 자리는 어떤 방식이든 직렬화**해야 하므로 분할로 없앨 수 없습니다. 이때는 admission control이나 대기열로 과부하를 흡수합니다. 읽기 복제본이나 캐시는 조회 부하는 줄여도 예약 쓰기의 정합성을 대신하지 않습니다.
-2. **트랜잭션 모양이 바뀌면 DB 락을 다시 비교합니다.** 여러 슬롯이나 여러 테이블의 불변식을 함께 지켜야 하면 한 행 조건부 UPDATE만으로는 부족합니다. 충돌 빈도와 재시도 비용을 측정해, 충돌이 많고 임계 구역이 긴 경우에는 비관적 락을, 충돌이 드물고 재시도가 싼 경우에는 낙관적 락을 후보로 올립니다.
-3. **임계 구역이 DB 밖으로 나갈 때만 분산 조율을 검토합니다.** 외부 결제 API·다른 저장소·정확히 한 번 처리해야 하는 알림이 예약 확정과 묶이면 단일 DB 트랜잭션의 범위를 벗어납니다. 그때 outbox·사가 같은 경계 설계와 함께 분산 락의 TTL·watchdog·fencing token까지 비교합니다. 단순히 서버가 여러 대라는 이유만으로 Redis 락을 추가하지 않습니다.
-
-#### 의도적으로 남긴 두 후속 과제
-
-- **만석 거절 경로 A/B:** 현재 ②는 조건부 UPDATE가 0행이면 `existsById`로 없는 슬롯(404)과 만석(409)을 구분합니다. 이를 제거하면 쿼리는 3개에서 2개로 줄지만 API 의미도 함께 바뀝니다. 기존 60회 표의 측정 대상을 중간에 바꾸지 않기 위해 그대로 두었으며, 별도 실험에서 응답 계약을 먼저 정한 뒤 3→2쿼리 A/B로 ④의 극단 경합 우위가 사라지는지 확인합니다.
-- **중복 재시도의 응답 의미:** UNIQUE는 두 번째 INSERT를 막고 트랜잭션을 롤백해 예약과 좌석 수를 정확하게 유지합니다. 그러나 응답은 경로와 남은 좌석에 따라 다릅니다. `/unique`는 제약 위반을 잡아 409로 번역합니다. 최종 선택인 `/conditional`은 자리가 남으면 INSERT의 제약 예외가 처리되지 않아 500, 이미 만석이면 INSERT 전에 409로 끝납니다. 첫 성공 응답을 잃은 클라이언트에게 엄밀한 응답은 모두 `200 + 기존 예약`입니다. 이는 별도 멱등성 키가 필요한 동시성 결함이 아니라, UNIQUE 위에서 기존 예약을 조회해 반환하는 API 응답 설계 과제로 분리합니다.
-
-### 트러블슈팅 회고
-
-_작성 예정 — 구현 과정에서 실제로 부딪힌 문제와 해결 과정._
-
----
-
-## 진행 상황
-
-- [x] **1단계** — 락 없는 기본 구현 + Gatling으로 서로 다른 지원자의 정원 초과·lost update·데드락 재현 ([서비스 계층](docs/STEP1-BASELINE-OVERBOOKING.md) · [HTTP 부하](docs/STEP1-GATLING-LOADTEST.md))
-- [x] **2단계** — 방어 수단 구현 및 벤치마크 — ① UNIQUE ✅ · ② 조건부 UPDATE ✅ · ③ 멱등성 키 ❌ 생략 · ④ 비관적 락 ✅ · ⑤ 낙관적 락 ✅ · ⑥ 분산 락 ❌ 생략 · ⑦ 벤치마크 ✅ ([결과](docs/STEP2-DEFENSE-BENCHMARK.md))
-- [x] **3단계** — 트레이드오프 분석 및 최종 선택 문서화 ([결론](#트레이드오프-분석))
-- [ ] **4단계** (선택) — 비동기 알림 분리, 동시성 통합 테스트, CI/CD, 배포
-
-브랜치 단위 진행 상황과 다음 작업은 [`docs/STEP2-3-BRANCH-STRATEGY.md`](docs/STEP2-3-BRANCH-STRATEGY.md)가 정본입니다.
+남은 API 과제는 두 가지입니다. 조건부 UPDATE의 만석 거절에서 404/409 구분 조회를 유지할지 별도 A/B로 확인하고, 중복 재시도에는 UNIQUE 위에서 기존 예약을 조회해 `200 + 기존 예약`을 반환하는 응답 계약을 설계합니다. 둘 다 별도 멱등성 키가 필요한 정합성 결함은 아닙니다.

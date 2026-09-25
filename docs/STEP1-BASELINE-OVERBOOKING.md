@@ -3,7 +3,7 @@
 > 이 문서는 **방어 장치가 없는 1단계 코드**가 동시성 버그를 실제로 일으킨다는 것을 통합 테스트로
 > 재현한 기록이다. 핵심은 "터진다"가 아니라 **"간헐적으로 터진다"** 이며, 그 과정에서 함께 드러난
 > **데드락**이라는 두 번째 실패 모드까지 관찰한다. 스키마 배경은 [ERD.md](ERD.md), 전체 계획은
-> `PROJECT_PLAN.md` 4장(1단계)을 정본으로 한다.
+> [PROJECT_PLAN의 단계별 결과 요약](../PROJECT_PLAN.md#단계별-결과-요약)을 정본으로 한다.
 
 관련 코드: [`BaselineOverbookingProbeTest`](../src/test/java/com/interview/reservation/concurrency/BaselineOverbookingProbeTest.java) ·
 [`ReservationService.reserve()`](../src/main/java/com/interview/reservation/service/ReservationService.java) ·
@@ -119,6 +119,7 @@ sequenceDiagram
 
 ---
 
+<a id="fk-lock-upgrade-deadlock"></a>
 ## 5. 두 번째 실패 모드 — 데드락 (SQL 1213 / SQLState 40001)
 
 부하 중 로그에 `Deadlock found when trying to get lock`(오류 1213)이 대량으로 찍힌다. 원인은
@@ -171,12 +172,11 @@ sequenceDiagram
 
 ---
 
-## 7. 한계와 다음 단계
+## 7. 한계와 후속 검증
 
 - **계층 한정.** 이 실험은 서비스 계층 + JUnit이다. 실제 HTTP 엔드포인트의 처리량(TPS)·응답시간·실패율은
   → **Gatling 부하 테스트**로 보강했다: [STEP1-GATLING-LOADTEST.md](STEP1-GATLING-LOADTEST.md). 예고대로
   HTTP 지연이 경쟁 창을 넓혀, 간헐적이던 오버부킹이 lost update·데드락 폭증과 함께 상시로 드러났다.
 - **수치는 하드웨어·타이밍 의존적.** 절대치가 아니라 "간헐적으로 터진다"는 성질과 그 메커니즘이 요점이다.
-- **다음 단계(2단계) 방어**는 `PROJECT_PLAN.md` 3장 순서(UNIQUE → 조건부 UPDATE → 락)로
-  도입한다. 참고로 조건부 UPDATE(`SET remaining=remaining-1 WHERE remaining>0`)는 읽기·쓰기를 원자적
-  UPDATE 한 방으로 합쳐, 4절의 경쟁 창과 5절의 S→X 승격 데드락을 **동시에** 없앤다.
+- **2단계 방어**는 [방어 선택 원칙](../PROJECT_PLAN.md#방어-선택-원칙)의 순서(UNIQUE → 조건부 UPDATE → 락)로
+  도입했다. 최종 비교는 [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md)에 있다.

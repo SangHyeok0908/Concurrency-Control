@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
  * {@code atOnceUsers}로 동시에 예약을 시도한다. 시드(슬롯 1개 + 지원자 N명 생성)를 먼저 돌리고,
  * {@code andThen}으로 그 뒤에 경쟁 버스트를 발사한다.
  *
- * <p><b>제약(CLAUDE.md).</b> 이 시뮬레이션은 baseline을 측정만 한다. {@code ReservationService}는
+ * <p><b>제약(AGENTS.md).</b> 이 시뮬레이션은 baseline을 측정만 한다. {@code ReservationService}는
  * 의도적으로 락이 없으며 여기서 고치지 않는다. 오버부킹은 리포트 통과/실패가 아니라 DB 확정 행 수로
  * 증명하므로 assertion을 걸지 않는다(프로브 테스트와 같은 철학).
  *

@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## 이 프로젝트가 무엇인가
 
@@ -20,8 +20,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 [docs/STEP1-GATLING-LOADTEST.md](docs/STEP1-GATLING-LOADTEST.md)(HTTP 부하, 성능 기준선)에 있다.
 부하 시뮬레이션은 `src/gatling/java`의 `BaselineReservationSimulation`이다.
 
-2·3단계는 **방어 하나당 브랜치 하나**(`step2/...`)로 진행하며, 각 브랜치를 **새 세션(새 컨텍스트)에서**
-작업한다. 새 세션에서는 위 전략 문서의 진행 상황 표에서 다음 브랜치를 확인하고 해당 항목(①~⑧)만 따르면 된다.
+2·3단계는 방어 하나당 브랜치 하나로 진행해 모두 완료됐다. 후속 작업은 위 전략 문서의 진행 상황 표와
+각 산출물을 먼저 확인하고, 완료된 실험의 조건이나 수치를 바꿀 때는 기존 결과와 섞지 말고 별도 범위로 다룬다.
 
 동시성 통합 테스트 `BaselineOverbookingProbeTest`는 **의도적으로 "간헐 재현 프로브"** 다. 실제 MySQL은
 트랜잭션이 빨라 오버부킹이 매번 터지지 않으므로, 단언은 신뢰 가능한 불변식(확정 예약 ≥ 정원)에만 걸고
@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 방어 계층
 
-방어 수단은 **가벼운 것부터** 정해진 순서로 도입한다(UNIQUE 제약 → 조건부 UPDATE → 락). 전체 목록과 근거는 `PROJECT_PLAN.md` 3장에 있으니 그쪽을 정본으로 삼고, 여기 다시 옮겨 적지 말 것. 코드를 추가할 때 그 순서를 유지한다 — 순서 자체가 포트폴리오의 논지다("가장 단순한 도구에서 시작했고, 부족해지는 지점에서만 더 무거운 도구를 꺼냈다").
+방어 수단은 **가벼운 것부터** 정해진 순서로 도입한다(UNIQUE 제약 → 조건부 UPDATE → 락). 전체 목록과 근거는 [PROJECT_PLAN.md의 방어 선택 원칙](PROJECT_PLAN.md#방어-선택-원칙)을 정본으로 삼고, 여기 다시 옮겨 적지 말 것. 코드를 추가할 때 그 순서를 유지한다 — 순서 자체가 포트폴리오의 논지다("가장 단순한 도구에서 시작했고, 부족해지는 지점에서만 더 무거운 도구를 꺼냈다").
 
 락 2종(비관적 `@Lock(PESSIMISTIC_WRITE)`, 낙관적 `@Version` + 백오프)은 **조건부 UPDATE만으로 부족해지는 지점을 보여주기 위해** 구현하는 것이지 기본 해법이 아니다. 요청 중복(같은 사용자의 재요청)과 데이터 레이스(정원 경쟁)는 **서로 다른 문제**이며 락은 전자를 해결하지 못한다.
 
@@ -52,11 +52,16 @@ docker compose up -d     # MySQL(:3306)·Redis(:6379) 기동 — bootRun/부하 
 ./gradlew test --tests 'com.interview.reservation.ReservationApplicationTests'  # 단일 클래스
 ```
 
-DB는 `reservation`(root, 비밀번호 없음), 앱은 `:8080`. 로컬 실행 설정은 `.claude/launch.json`에도
-있다(`reservation-app`, `infra`).
+DB는 `reservation`(root, 비밀번호 없음), 앱은 `:8080`. Codex 로컬 설정은
+`.codex/config.toml`에서 관리하며 자격증명을 포함할 수 있으므로 Git에서 제외한다.
+
+## GitHub 도구
+
+GitHub 원격 작업(PR, 이슈, Actions 등)은 GitHub MCP 대신 `gh` CLI로 수행한다. 작업 전에
+`gh auth status`로 인증 상태를 확인하고, 구조화된 결과가 필요하면 `--json`과 `--jq`를 사용한다.
 
 ## 커밋
 
-커밋 단위 자체가 이 포트폴리오의 평가 항목이다(`PROJECT_PLAN.md` 5장). 한 번에 몰아서 커밋하지 말고 작고 의미 있는 단위로 나눌 것.
+커밋 단위 자체가 이 포트폴리오의 평가 항목이다. 한 번에 몰아서 커밋하지 말고 작고 의미 있는 단위로 나눌 것.
 
 **커밋은 절대 자동으로 찍지 말 것.** 작업(코드 작성, 테스트, 수정)은 진행하되, `git commit`은 반드시 사용자에게 먼저 물어보고 명시적 승인을 받은 뒤에만 실행한다. 커밋 메시지 초안을 보여주고 확인을 받는 것을 기본으로 한다.
