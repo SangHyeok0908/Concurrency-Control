@@ -284,6 +284,13 @@ class MethodologyV2SummaryTest(unittest.TestCase):
         self.assertIn("실행별 평균 응답의 중앙값 (min–max) (ms)", result.stdout)
         self.assertIn("실행별 p95의 중앙값 (min–max) (ms)", result.stdout)
         self.assertIn("버스트 TPS의 중앙값 (min–max) (requests/s)", result.stdout)
+        self.assertNotIn("중복 최댓값", result.stdout)
+        self.assertEqual(
+            2,
+            result.stdout.count(
+                "서로 다른 지원자를 사용하므로 동일 요청 중복 방어는 이 표에서 검증하지 않는다"
+            ),
+        )
         self.assertIn("105.5 <sub>(101–110)</sub>", phase_a)
         self.assertIn("155.5 <sub>(151–160)</sub>", phase_a)
         self.assertIn("132.55 <sub>(131.9–133.2)</sub>", phase_a)

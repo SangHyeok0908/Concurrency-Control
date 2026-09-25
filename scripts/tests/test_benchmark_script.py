@@ -485,6 +485,20 @@ class BenchmarkScriptTest(unittest.TestCase):
         self.assertIn("warmup", result.stderr.lower())
         self.assertIn("warmup", (campaign / "manifest.md").read_text().lower())
 
+    def test_gatling_command_explicitly_selects_the_capacity_race_simulation(self):
+        result = self.harness.run(
+            "--campaign-id", "explicit-simulation", "--phase", "a",
+            FAKE_GRADLE_FAIL_AT="1",
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(1, self.harness.count("gradle_count"))
+        self.assertIn(
+            "--simulation "
+            "com.interview.reservation.loadtest.BaselineReservationSimulation",
+            self.harness.lines("gradle.log")[0],
+        )
+
     def test_gatling_cannot_consume_the_schedule_loop_stdin(self):
         result = self.harness.run(
             "--campaign-id", "stdin-isolated", "--phase", "a",

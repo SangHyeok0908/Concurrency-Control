@@ -499,6 +499,7 @@ select_new_report() {
 
 invoke_gatling() {
   "$BENCHMARK_GRADLEW" gatlingRun --console=plain -q \
+    --simulation com.interview.reservation.loadtest.BaselineReservationSimulation \
     -DbaseUrl="$BASE_URL" -Dstrategy="$strategy" \
     -Dcapacity="$capacity" -Dcontenders="$contenders" \
     >"$GATLING_LOG" 2>&1 </dev/null

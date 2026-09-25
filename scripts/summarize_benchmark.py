@@ -253,12 +253,14 @@ def _render_v2_phase(out, grouped, phase, phase_label, cap):
     out.append("\n## Phase %s — optimisticMaxAttempts=%d\n" % (phase_label, cap))
     out.append(
         "이 표의 모든 전략은 같은 Phase의 검증된 애플리케이션 기동에서 측정됐다. "
-        "각 성능 셀은 실행별 값의 중앙값과 min–max 범위다."
+        "각 성능 셀은 실행별 값의 중앙값과 min–max 범위다. "
+        "이 정원 경쟁 workload는 서로 다른 지원자를 사용하므로 동일 요청 중복 방어는 "
+        "이 표에서 검증하지 않는다."
     )
     for contention, point_title, chart_title, _short_title in POINTS:
         out.append("\n### %s\n" % point_title)
         out.append(
-            "| 전략 | 확정 예약 중앙값 | 오버부킹 최댓값 | 중복 최댓값 | KO 중앙값 "
+            "| 전략 | 확정 예약 중앙값 | 오버부킹 최댓값 | 중복 관찰값† | KO 중앙값 "
             "| 실행별 평균 응답의 중앙값 (min–max) (ms) "
             "| 실행별 p95의 중앙값 (min–max) (ms) "
             "| 버스트 TPS의 중앙값 (min–max) (requests/s) | n |"
