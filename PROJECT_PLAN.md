@@ -102,7 +102,7 @@ WHERE id = ? AND remaining > 0;
 - 별도 잠금 조회와 애플리케이션의 read-check-decrease 단계를 제거해 경쟁 판단을 한 SQL 문으로 축소
 - 단순 카운터 감소의 성공 지배 경로에서는 쿼리 수를 줄일 수 있음 — 실제 성능은 요청 경로별 부하 실험으로 판단
 
-조건부 UPDATE도 InnoDB 내부에서는 행 잠금을 사용하며, 이 구현에서는 뒤이은 예약 INSERT와 트랜잭션 커밋까지 그 잠금을 보유한다. 주변 트랜잭션의 다른 SQL과 결합하면 데드락 가능성이 0이라고 일반화할 수도 없다. 이 프로젝트의 60회 측정에서는 ②의 KO가 0이었지만, 이는 해당 시나리오의 관측값이다.
+조건부 UPDATE도 InnoDB 내부에서는 행 잠금을 사용하며, 이 구현에서는 뒤이은 예약 INSERT와 트랜잭션 커밋까지 그 잠금을 보유한다. 주변 트랜잭션의 다른 SQL과 결합하면 데드락 가능성이 0이라고 일반화할 수도 없다. 이 프로젝트의 v2 200회 측정에서는 ②의 KO가 0이었지만, 이는 해당 시나리오의 관측값이다.
 
 여기에 `UNIQUE(applicant_id, slot_id)` 제약을 걸면
 애플리케이션 로직에 버그가 있어도 **DB 레벨에서 중복 예약이 물리적으로 불가능**해진다.
@@ -173,14 +173,20 @@ WHERE id = ? AND remaining > 0;
 
 **2-2. 락 방식 비교 구현**
 - [x] **비관적 락**: `@Lock(LockModeType.PESSIMISTIC_WRITE)` → `SELECT ... FOR UPDATE`
-      오버부킹 0 달성. 통제 재측정에서는 낮은 경합 응답 중앙값이 ②와 같고 극단 경합은 더
-      빨랐으므로, 성능 열세를 이유로 배제하지 않는다. 현재 불변식이 조건부 DML 한 문장으로
-      표현돼 명시적 잠금 구간이 필요 없다는 이유로 **채택하지 않는다**
+      오버부킹 0 달성. v2에서 낮은 경합 평균 응답 중앙값은 Phase A/B 각각 ② 125.5/126ms,
+      ④ 152/140ms였고 극단 경합은 ② 117/122.5ms, ④ 88.5/97.5ms였다. Phase 내부
+      라운드별 비교도 이 방향과 일치하지만 두 실행의 직렬 위치·시점 차이가 남으므로 락 하나의
+      인과 효과로 단정하지 않는다. 보편적 성능 열세를 이유로 배제하지 않고, 현재 불변식이 조건부
+      DML 한 문장으로 표현돼 명시적 잠금 구간이 필요 없다는 이유로 **채택하지 않는다**
       ([구현 당시 예비 측정](docs/STEP2-PESSIMISTIC-LOCK.md) ·
-      [통제 종합 비교](docs/STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic))
+      [v2 종합 비교](docs/STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic))
 - [x] **낙관적 락**: `@Version` 컬럼 + 재시도 로직 (지수 백오프)
-      오버부킹 0을 달성했지만, 통제 재측정에서 상한 5는 중앙값 13/100석만 채웠고
-      상한 20은 조건부 UPDATE TPS의 23.6%라 **채택하지 않는다**
+      오버부킹 0을 달성했지만, v2 Phase A의 상한 5는 낮은 경합 확정 예약 중앙값 12,
+      재시도 소진 108건(103–110)이었다. Phase B의 상한 20은 100석을 채웠지만 평균 응답
+      483ms(461–531), 버스트 TPS 139.5(131.3–149.1)였고, 같은 Phase의 조건부 UPDATE는
+      126ms(119–142), 563.4 TPS(526.3–594.1)였다. 상한 5/20은 서로 다른 앱 기동의
+      민감도 분석이지 동일 프로세스 짝비교가 아니다. 측정한 두 상한에서 가용성이나 비용 중 하나를
+      잃어 **채택하지 않는다**
       ([구현·백오프 근거](docs/STEP2-OPTIMISTIC-LOCK.md) · [전략 종합 비교](docs/STEP2-DEFENSE-BENCHMARK.md))
 - [x] ~~**분산 락**: Redis + Redisson `RLock`~~ → **생략 결정 (2026-09-04)**
       분산 락은 동시성 제어를 DB 하나로 끝낼 수 없을 때(임계 구역에 DB 밖 자원이 들어올 때) 쓰는
@@ -189,10 +195,16 @@ WHERE id = ? AND remaining > 0;
 
 **2-3. 벤치마크**
 - [x] 동일한 부하 시나리오로 각 방식 측정
-- [x] 측정 지표: **처리량(TPS), 평균/최대 응답시간, 실패율, 데이터 정합성**
+- [x] 측정 지표: **버스트 TPS, 실행별 평균/p95 응답시간, 실패율, 데이터 정합성**
 - [x] 결과를 표 + 그래프로 정리
-      ([통제 60회 종합 결과](docs/STEP2-DEFENSE-BENCHMARK.md) · [원시 측정치](docs/benchmark/raw-runs.csv) ·
-      [실행 환경](docs/benchmark/2026-09-24-controlled-run.md))
+      10개 처리를 Williams 균형 순서로 배치해 Phase당 10라운드, 총 200회를 측정했다.
+      ([v2 종합 결과](docs/STEP2-DEFENSE-BENCHMARK.md) · [v2 원시 정본](docs/benchmark/raw-runs-v2.csv) ·
+      [성공 캠페인 매니페스트](docs/benchmark/campaigns/2026-09-25-williams-v2-01/manifest.md) ·
+      [Phase A 환경](docs/benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-a.json) ·
+      [Phase B 환경](docs/benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-b.json))
+      2026-09-24 고정 순서 60회는 변경 불가한 `methodology-v1-fixed-order`
+      [원시 자료](docs/benchmark/raw-runs.csv)와 [실행 기록](docs/benchmark/2026-09-24-controlled-run.md)으로
+      보존한다.
 
 ---
 
