@@ -1,5 +1,7 @@
 # 벤치마크 방법론 v2 구현 계획
 
+> **상태:** 승인됐으나 아직 구현되지 않은 내부 roadmap 계획입니다. 현재 공개 정본이 아니며, 공개 벤치마크 기준은 [STEP2-DEFENSE-BENCHMARK.md](../../STEP2-DEFENSE-BENCHMARK.md)입니다.
+
 > **에이전트 작업자용:** **필수 하위 스킬:** 이 계획을 작업 단위로 구현할 때 `superpowers:subagent-driven-development`(권장) 또는 `superpowers:executing-plans`를 사용한다. 진행 상태는 체크박스(`- [ ]`) 문법으로 추적한다.
 
 **목표:** 예약 전략을 변경하지 않으면서 고정 순서 벤치마크와 응답 시간 기반의 대체 TPS를, 재현 가능한 10개 처리의 Williams 스케줄·요청 타임스탬프에서 계산한 버스트 TPS·검증 및 추적 가능한 방법론 v2 캠페인으로 교체한다.
@@ -14,8 +16,9 @@
 - baseline에 분산 락, Redis 멱등성 키, 스키마 가드, 재시도를 도입하지 않는다.
 - 구현 전 과정에서 다음 방법론 v1 파일을 바이트 단위로 보존한다.
   - `docs/benchmark/raw-runs.csv` — SHA-256 `7824f10229b460e911a49f47c46bb8d6338587de1401709c09a8e919ab1ed3c3`
-  - `docs/benchmark/2026-09-24-controlled-run.md` — SHA-256 `6413ce6c1c1dc6d02b55d62a049cc21703e4caa1cff8a3d482b862648cc55814`
+  - `docs/benchmark/2026-09-24-controlled-run.md` — SHA-256 `b3d00fe5f63a7f66edb1f712bf940310ea070a7a7b2fe441d76d96dd5ff93ff7`
   - `docs/benchmark/optimistic-attempt-distribution-cap20.json` — SHA-256 `f193d7510ac6ce02934b99aa7c06232541f7917ba5639b9565a818d587535698`
+- controlled-run 해시는 2026-09-25에 정원 경쟁과 동일 요청 근거를 분리한 문서 정정까지 반영한 값이다.
 - `scripts/validate_phase_b_input.py`와 `scripts/tests/test_validate_phase_b_input.py`는 v1 호환 경로로 유지한다. 방법론 v2에서는 이들을 호출하지 않는다.
 - Python 3.9 호환 문법만 사용한다. `T | None` 대신 `Optional[T]`를 사용하고 `match`는 사용하지 않는다.
 - Bash 3.2 호환 문법만 사용한다. 연관 배열, `mapfile`, `readarray`, Bash 4 전용 확장을 사용하지 않는다. `jq`나 다른 runtime dependency를 추가하지 않는다.
@@ -527,7 +530,7 @@ v2 output은 다섯 전략과 두 contention point를 모두 포함하는 별도
 - [ ] `--print-plan`으로 Phase A와 B plan을 각각 두 번 생성하고 byte를 비교하며 phase당 100행인지 독립적으로 센다.
 - [ ] 의도적으로 incomplete, failed, unbalanced하게 만든 temporary fixture에 `python3 scripts/validate_benchmark_campaign.py`를 실행해 세 경우 모두 summary output이나 promotion 없이 실패하는지 확인한다.
 - [ ] 전역 제약의 v1 SHA-256 값 3개를 모두 다시 계산해 비교한다.
-- [ ] `git diff --check`, `git status --short`, `git diff --stat`을 검사한다. `AGENTS.md`는 관련 없는 untracked 상태로 남아 있어야 한다.
+- [ ] `git diff --check`, `git status --short`, `git diff --stat`을 검사한다. 저장소 지침인 `AGENTS.md`에는 이 작업과 무관한 변경이 없어야 한다.
 - [ ] 검사가 하나라도 실패하면 검증기나 테스트를 약화하지 말고 해당 파일을 소유한 작업의 red-green 반복으로 돌아간다. 변경이 없는 검증 작업에는 커밋이 없다.
 
 ### 작업 9: 균형 잡힌 200행 캠페인 실행 및 공개
@@ -543,7 +546,7 @@ v2 output은 다섯 전략과 두 contention point를 모두 포함하는 별도
 해당 directory에 측정 state가 하나라도 이미 있으면 새 campaign ID를 사용한다. 실패한 campaign을 삭제하거나 재사용하지 않는다.
 
 - [ ] Docker를 사용할 수 있는지 확인한 뒤 `docker compose up -d`를 실행하고 기존 data를 삭제하지 않은 채 MySQL/Redis health를 검증한다.
-- [ ] 실행 전 Git status와 v1 hash 3개를 캡처한다. 예상하지 못한 dirty implementation worktree에서는 측정을 거부한다. 관련 없는 untracked `AGENTS.md`는 허용한다.
+- [ ] 실행 전 Git status와 v1 hash 3개를 캡처한다. 예상하지 못한 dirty implementation worktree에서는 측정을 거부한다. 로컬 `.codex/` 설정은 Git에서 무시되며 측정 변경에 포함하지 않는다.
 - [ ] 전용 terminal/session에서 `./gradlew bootRun --args='--spring.profiles.active=benchmark'`로 Phase A를 시작하고 애플리케이션이 준비될 때까지 기다린다.
 - [ ] `scripts/benchmark.sh --campaign-id 2026-09-24-williams-v2 --phase a --rounds 10`을 실행한다. 명령 완료와 100행 Phase A validator 통과 후 Phase A 애플리케이션을 중지한다.
 - [ ] `./gradlew bootRun --args='--spring.profiles.active=benchmark --reservation.optimistic.max-attempts=20'`으로 새 Phase B 애플리케이션을 시작하고 준비될 때까지 기다린다.

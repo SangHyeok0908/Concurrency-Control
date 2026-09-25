@@ -1,5 +1,7 @@
 # 동일 요청 중복 검증 설계
 
+> **상태:** 구현 완료된 내부 설계 기록입니다. 실행 정본은 [2026-09-25-duplicate-request-run.md](../../benchmark/2026-09-25-duplicate-request-run.md)입니다.
+
 - 작성일: 2026-09-25
 - 상태: 승인됨 (2026-09-25)
 - 기준 커밋: `7645faf` (`docs: plan benchmark methodology v2 implementation`)

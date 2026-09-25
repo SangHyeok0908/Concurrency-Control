@@ -1,5 +1,7 @@
 # 벤치마크 순서 효과·처리량 지표 개선 설계
 
+> **상태:** 승인됐으나 아직 구현되지 않은 내부 roadmap 설계입니다. 현재 공개 정본이 아니며, 공개 벤치마크 기준은 [STEP2-DEFENSE-BENCHMARK.md](../../STEP2-DEFENSE-BENCHMARK.md)입니다.
+
 - 작성일: 2026-09-24
 - 상태: 승인됨 (2026-09-24)
 - 기준 커밋: `dbb3d67` (`docs: record controlled benchmark rerun`)

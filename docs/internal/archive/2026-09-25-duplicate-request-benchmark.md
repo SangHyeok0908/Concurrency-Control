@@ -1,5 +1,7 @@
 # Duplicate Request Benchmark Implementation Plan
 
+> **상태:** 구현 완료된 내부 계획 기록입니다. 실행 정본은 [2026-09-25-duplicate-request-run.md](../../benchmark/2026-09-25-duplicate-request-run.md)입니다. 아래 체크박스는 당시 계획 원문이며 현재 진행 상태를 나타내지 않습니다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the vacuous “duplicates=0 in 60 distinct-applicant runs” evidence with a real, reproducible 25-run same-applicant/same-slot HTTP experiment.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Java 21, Gatling Java DSL 3.13.5, Bash, Python 3 standard library, Spring Boot 3.5, MySQL 8, Gradle 8.14.5.
 
-**Spec:** `docs/superpowers/specs/2026-09-25-duplicate-request-benchmark-design.md`
+**Spec:** [`2026-09-25-duplicate-request-benchmark-design.md`](2026-09-25-duplicate-request-benchmark-design.md)
 
 ## Global Constraints
 
@@ -18,7 +20,7 @@
 - Do not hide 500/503 responses from strategies that do not translate UNIQUE violations.
 - Do not use duplicate-workload timings to rank strategies.
 - Do not execute `git commit`; AGENTS.md requires explicit user approval. Record suggested commit boundaries only.
-- Preserve untracked `.codex/` and `AGENTS.md` files.
+- At execution time, `.codex/` and `AGENTS.md` were unrelated untracked files and were preserved; this is historical context, not current worktree policy.
 
 ## Review Focus
 
