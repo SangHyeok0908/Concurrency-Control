@@ -203,6 +203,7 @@ for (( round = 1; round <= ROUNDS; round++ )); do
 
       start_ns=$(date +%s)
       ./gradlew gatlingRun --console=plain -q \
+        --simulation com.interview.reservation.loadtest.BaselineReservationSimulation \
         -DbaseUrl="$BASE_URL" -Dstrategy="$strategy" \
         -Dcapacity="$capacity" -Dcontenders="$contenders" \
         > /tmp/gatling-run.log 2>&1
