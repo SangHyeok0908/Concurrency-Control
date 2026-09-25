@@ -150,7 +150,7 @@ WHERE id = ? AND remaining > 0;
 - [x] 지원자 등록 / 면접 슬롯 조회 / 선착순 예약 API
 - [x] **의도적으로 락 없이 구현**
 - [x] Gatling으로 동시 요청 100~500개 부하 테스트
-- [x] **정원 초과 / 중복 예약이 실제로 발생하는 것을 캡처**
+- [x] **서로 다른 지원자의 정원 초과 / lost update / 데드락을 실제로 캡처**
       → [서비스 계층 재현](docs/STEP1-BASELINE-OVERBOOKING.md) · [HTTP 부하](docs/STEP1-GATLING-LOADTEST.md)
 
 > 산출물: "그때는 몰랐던 문제를 이번엔 직접 눈으로 확인했다"는 증거
@@ -188,11 +188,13 @@ WHERE id = ? AND remaining > 0;
       ([근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock))
 
 **2-3. 벤치마크**
-- [x] 동일한 부하 시나리오로 각 방식 측정
-- [x] 측정 지표: **처리량(TPS), 평균/최대 응답시간, 실패율, 데이터 정합성**
-- [x] 결과를 표 + 그래프로 정리
-      ([통제 60회 종합 결과](docs/STEP2-DEFENSE-BENCHMARK.md) · [원시 측정치](docs/benchmark/raw-runs.csv) ·
-      [실행 환경](docs/benchmark/2026-09-24-controlled-run.md))
+- [x] 서로 다른 지원자의 정원 경쟁을 같은 부하 시나리오로 각 방식에 인가
+- [x] 정원 경쟁 지표: **처리량(TPS), 평균/최대 응답시간, 실패율, 오버부킹**
+- [x] 동일 `(applicant_id, slot_id)` 200건을 별도 workload로 5개 경로 × 5회 검증
+- [x] 동일 요청 지표: **HTTP 상태별 건수, 확정/동일 pair 예약 1건, 좌석 소모 1, 중복 행 0**
+- [x] 목적이 다른 두 결과를 별도 원시 CSV와 표로 정리
+      ([종합 결과](docs/STEP2-DEFENSE-BENCHMARK.md) · [정원 경쟁 60행](docs/benchmark/raw-runs.csv) ·
+      [동일 요청 25행](docs/benchmark/duplicate-runs.csv))
 
 ---
 

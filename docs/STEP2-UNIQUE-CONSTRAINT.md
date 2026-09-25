@@ -9,7 +9,8 @@
 [`UniqueConstraintReservationStrategy`](../src/main/java/com/interview/reservation/service/strategy/UniqueConstraintReservationStrategy.java) ·
 [`ReservationStrategy`](../src/main/java/com/interview/reservation/service/strategy/ReservationStrategy.java) ·
 [`V2__add_unique_reservation.sql`](../src/main/resources/db/migration/V2__add_unique_reservation.sql) ·
-[`UniqueConstraintReservationTest`](../src/test/java/com/interview/reservation/concurrency/UniqueConstraintReservationTest.java)
+[`UniqueConstraintReservationTest`](../src/test/java/com/interview/reservation/concurrency/UniqueConstraintReservationTest.java) ·
+[`DuplicateReservationSimulation`](../src/gatling/java/com/interview/reservation/loadtest/DuplicateReservationSimulation.java)
 
 ---
 
@@ -24,7 +25,7 @@
 | 방어 수단 | `ALTER TABLE reservation ADD UNIQUE (applicant_id, slot_id)` (V2, append-only) |
 | 막는 문제 | 중복 예약 (같은 (지원자, 슬롯) 쌍이 2행 이상) |
 | **못 막는** 문제 | 오버부킹 (서로 다른 지원자가 정원 초과). 재시도한 클라이언트에게 기존 결과를 돌려주지도 않는다(6절) |
-| 검증 계층 | 서비스/전략 계층 직접 호출 + Testcontainers MySQL 8, HTTP 스모크 |
+| 검증 계층 | 서비스/전략 계층 + Testcontainers MySQL 8, HTTP 스모크, 동일 요청 Gatling 25회 |
 | 결정성 | **결정적** — baseline 오버부킹의 "간헐성"과 대비된다 |
 
 ---
@@ -90,6 +91,20 @@ baseline 오버부킹 프로브는 "간헐적으로만" 터져 관찰만 했지�
 
 > 위 `사용 가능` 목록은 **① 시점의 캡처**다. 등록된 전략에서 동적으로 만들어지는 메시지라 방어가
 > 추가될수록 늘어난다(② 이후 `conditional` 포함).
+
+### 5-3. 실제 HTTP 동시 재요청 25회
+
+정원 200 슬롯과 지원자 한 명을 매 실행 새로 만들고 동일 `(applicantId, slotId)` 요청 200건을
+`atOnceUsers`로 보냈다. 다섯 예약 경로를 각 5회 실행한 총 5,000건에서 DB 예약 행과 좌석 소모는
+매번 정확히 1이었다. 이는 V2 UNIQUE가 특정 전략 코드가 아니라 테이블 전역의 최후 방어선이라는
+뜻이다.
+
+`/unique` 5회에서는 첫 요청 5건이 201, 나머지 995건이 모두 409였고 500·503·기타·무응답은
+0이었다. 반면 UNIQUE 위반을 도메인 예외로 번역하지 않는 다른 네 경로는 데이터는 지켰지만 각
+995건을 500으로 반환했다. 따라서 **DB 중복 방어**와 **재요청의 HTTP 의미**는 별도 계약이다.
+
+원시 25행과 환경·해시는 [동일 요청 실행 기록](benchmark/2026-09-25-duplicate-request-run.md),
+전체 전략 해석은 [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md#3-1-1-동일-요청-25회--db-안전성과-http-의미)에 있다.
 
 > **운영 메모.** V2는 append-only 마이그레이션이라, 이미 중복 (지원자, 슬롯) 행이 있는 DB에서는
 > `ALTER TABLE ... ADD UNIQUE`가 실패한다. 실제로 step1 부하 테스트 잔여 데이터가 남은 로컬 DB에서

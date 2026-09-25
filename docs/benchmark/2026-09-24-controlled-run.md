@@ -1,9 +1,14 @@
 # 2026-09-24 통제 재측정 실행 기록
 
-이 파일은 [`raw-runs.csv`](raw-runs.csv) 60행과
+이 파일은 서로 다른 지원자가 슬롯 정원을 경쟁한 [`raw-runs.csv`](raw-runs.csv) 60행과
 [`optimistic-attempt-distribution-cap20.json`](optimistic-attempt-distribution-cap20.json)이 어떤
 환경에서 만들어졌는지 고정한다. 이전 기본 프로필 측정은
 [`archive/2026-09-04-manifest.md`](archive/2026-09-04-manifest.md)와 함께 별도 보존한다.
+
+이 workload는 요청마다 다른 applicant를 사용한다. 따라서 원시 CSV의 `duplicates=0`은 동일
+`(applicant_id, slot_id)` 재요청 방어를 검증한 값이 아니다. 그 질문은
+[2026-09-25 동일 요청 실행 기록](2026-09-25-duplicate-request-run.md)과
+[`duplicate-runs.csv`](duplicate-runs.csv)에서 별도로 검증한다.
 
 ## 실행 환경
 
@@ -51,6 +56,7 @@ scripts/benchmark.sh --phase b --rounds 5
 ```
 
 Phase A는 5전략 × 2경합 × 5회 = 50행, Phase B는 낙관적 락 × 2경합 × 5회 = 10행이다.
+60행 모두 서로 다른 지원자의 정원 경쟁이며 동일 요청 workload와 합산하지 않는다.
 전략을 5회씩 몰아 실행하지 않고 라운드마다 한 번씩 배치했지만, 라운드 안의 전략 순서는
 `baseline → unique → conditional → pessimistic → optimistic`으로 고정했다. 따라서 장기적인
 워밍업 편향은 줄였어도 순서 효과를 완전히 무작위화한 실험은 아니다.

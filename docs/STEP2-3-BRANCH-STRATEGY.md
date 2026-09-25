@@ -17,7 +17,7 @@
 | ④ | `step2/pessimistic-lock` | ✅ 완료 (2026-07-18, PR #4) | [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md) |
 | ⑤ | `step2/optimistic-lock` | ✅ 완료 (2026-07-18, 백오프 실측 2026-07-19) | [STEP2-OPTIMISTIC-LOCK.md](STEP2-OPTIMISTIC-LOCK.md) · `V3` |
 | ⑥ | ~~`step2/distributed-lock`~~ | ❌ **생략** (2026-09-04, [근거](#skip-distributed-lock)) | — |
-| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04, 설정 통제 재측정 2026-09-24) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [`raw-runs.csv`](benchmark/raw-runs.csv) · [실행 환경](benchmark/2026-09-24-controlled-run.md) |
+| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04, 설정 통제 2026-09-24, 동일 요청 검증 2026-09-25) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [정원 경쟁 60행](benchmark/raw-runs.csv) · [동일 요청 25행](benchmark/duplicate-runs.csv) |
 | ⑧ | `step3/tradeoff-analysis` | ✅ 완료 (2026-09-23) | [README 트레이드오프 분석](../README.md#트레이드오프-분석) |
 
 ## Context
@@ -227,7 +227,10 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
   - ④에서 이미 `-Dstrategy`(경로 선택)와 **요청 이름 이름표**(`reserve [전략 cap=N cont=M]`)를
     넣어 뒀다. 이름표는 `js/stats.js`에 실리므로 리포트를 기계적으로 파싱해 표를 만들 수 있다 —
     이게 없으면 쌓인 리포트가 어느 전략의 측정인지 사후에 알 수 없다(④에서 실제로 겪은 문제)
-- 지표: TPS, 평균/최대 응답시간, 실패율, 데이터 정합성(오버부킹·중복 수)
+- 지표를 workload별로 분리한다.
+  - 서로 다른 지원자의 정원 경쟁: TPS, 평균/최대 응답시간, 실패율, 오버부킹
+  - 동일 `(applicant, slot)` 재요청: HTTP 상태 분포, 확정·동일 pair 예약 1건, 좌석 소모 1,
+    중복 행 0. 이 결과는 성능 순위에 쓰지 않는다
 - **②의 거절 경로 최적화 여지 확인 필요.** ④에서 쿼리 수를 재보니 거절 경로가 ② 3개 / ④ 2개로
   ②가 더 든다 — 만석과 없는 슬롯을 구분하려는 `existsById` 때문이다. 방어가 아니라 404/409 구분용
   조회라 제거 가능하며, `capacity=1`처럼 거절이 지배적인 지점의 수치를 왜곡할 수 있다.
@@ -251,12 +254,16 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
     상한 5는 중앙값 13/100석만 채우고 107건이 503, 상한 20은 100석을 채우지만
     평균 응답 중앙값 520ms·TPS 137.6이었다. 상한을 적지 않은 ⑤ 측정치는 해석이 불가능하다
 - 산출물: [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) — (전략 × 경합 수준) 2차원 표
-  + Mermaid 그래프 + [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)(통제 60행) +
-  [실행 환경·해시](benchmark/2026-09-24-controlled-run.md). 이전 기본 프로필 60행은
+  + Mermaid 그래프 + [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)(서로 다른 지원자의 정원 경쟁 60행) +
+  [`benchmark/duplicate-runs.csv`](benchmark/duplicate-runs.csv)(동일 요청 25행) +
+  [정원 경쟁 실행 환경·해시](benchmark/2026-09-24-controlled-run.md) +
+  [동일 요청 실행 환경·해시](benchmark/2026-09-25-duplicate-request-run.md). 이전 기본 프로필 60행은
   [`benchmark/archive`](benchmark/archive/2026-09-04-manifest.md)에 보존한다
   - 측정 자동화: [`scripts/benchmark.sh`](../scripts/benchmark.sh)(라운드 단위 인터리브 스윕) ·
+    [`scripts/benchmark-duplicates.sh`](../scripts/benchmark-duplicates.sh)(동일 요청 순환 검증) ·
     [`scripts/parse_gatling_report.py`](../scripts/parse_gatling_report.py)(이름표로 리포트 식별) ·
-    [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)(중앙값·범위·짝비교 표)
+    [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)(정원 경쟁 중앙값·범위·짝비교 표) ·
+    [`scripts/duplicate_benchmark.py`](../scripts/duplicate_benchmark.py)(동일 요청 상태·DB 불변식 검증)
 
 ### 3단계. 트레이드오프 분석 및 최종 선택
 
@@ -285,13 +292,17 @@ master
 ## Verification (각 방어 브랜치 공통 절차)
 
 1. `docker compose up -d` (MySQL:3306 / Redis:6379)
-2. `./gradlew test` — 해당 브랜치의 동시성 통합 테스트 통과(오버부킹/중복 0 단언)
+2. `./gradlew test` — 해당 방어가 맡은 불변식의 동시성 통합 테스트 통과
+   - ①: 같은 `(applicant, slot)` 동시 요청의 예약 행 1건
+   - ②·④·⑤: 서로 다른 지원자의 정원 경쟁에서 오버부킹 0
 3. `./gradlew bootRun` 후 `./gradlew gatlingRun`으로 해당 전략에 부하 인가
    - 극단 경합: `-Dcapacity=1 -Dcontenders=200` (최악 인터리빙 강제)
    - 낮은 경합: `-Dcapacity=100 -Dcontenders=120` — ④⑤에서는 이 지점도 재고 기록한다
      ([실험 통제 원칙](#lock-experiment-control))
-4. baseline 대비 데이터 정합성(오버부킹·중복 수)과 성능 지표 변화를 캡처해 문서에 기록
+4. baseline 대비 정원 경쟁의 오버부킹과 성능 지표 변화를 캡처해 문서에 기록
 5. `step2/benchmark`에서 전 전략을 두 경합 지점 모두에서 재측정해 종합 표/그래프 작성
+6. 동일 요청은 별도 `DuplicateReservationSimulation`으로 전 경로를 검증해 HTTP 상태와 DB 행·좌석
+   불변식을 별도 CSV에 기록
 
 ## 범위 밖 (이번 계획 제외)
 

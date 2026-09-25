@@ -6,8 +6,9 @@
 함께 도는 측정이라 실행 간 편차가 크고, 평균 하나만 적으면 그 편차가 숨는다. 그래서 이 스크립트는
 **중앙값과 min–max 범위를 항상 함께** 낸다 — 범위가 겹치면 겹친다고 읽히도록.
 
-정합성(오버부킹·중복)은 통계를 내지 않는다. 최댓값만 본다 — 5회 중 1회라도 오버부킹이 나면
-그 방어는 오버부킹을 막지 못하는 것이므로, 평균을 내면 실패가 희석된다.
+정합성 중 이 workload가 실제로 자극하는 오버부킹은 통계를 내지 않고 최댓값만 본다 — 5회 중
+1회라도 발생하면 방어하지 못한 것이므로 평균을 내면 실패가 희석된다. 원시 CSV의
+``duplicates``는 서로 다른 지원자만 보내 항상 0이 되는 관찰 필드라 표에 싣지 않는다.
 """
 import csv
 import statistics
@@ -53,11 +54,14 @@ def main():
     for r in rows:
         g[(r["strategy"], int(r["optimistic_max_attempts"]), r["contention"])].append(r)
 
-    out = []
+    out = [
+        "이 표는 **서로 다른 지원자의 정원 경쟁** 결과다. 동일 `(applicant, slot)` 재요청은 ",
+        "별도 [`duplicate-runs.csv`](benchmark/duplicate-runs.csv)에서 검증한다.\n",
+    ]
     for point_key, point_title in POINTS:
         out.append(f"\n### {point_title}\n")
-        out.append("| 전략 | 확정 예약 | 오버부킹 | 중복 | KO(실패) | 평균 응답 (중앙값) | p95 | TPS | n |")
-        out.append("|---|---|---|---|---|---|---|---|---|")
+        out.append("| 전략 | 확정 예약 | 오버부킹 | KO(실패) | 평균 응답 (중앙값) | p95 | TPS | n |")
+        out.append("|---|---|---|---|---|---|---|---|")
         for key in ORDER:
             runs = g.get((key[0], key[1], point_key))
             if not runs:
@@ -66,7 +70,6 @@ def main():
             confirmed, _ = med_range([int(r["confirmed"]) for r in runs])
             # 정합성은 최댓값. 한 번이라도 터지면 막지 못한 것이다.
             overbook = max(int(r["overbooking"]) for r in runs)
-            dup = max(int(r["duplicates"]) for r in runs)
             ko_med, ko_rng = med_range([int(r["ko"]) for r in runs])
             mean_med, mean_rng = med_range([int(r["mean_ms"]) for r in runs])
             p95_med, _ = med_range([int(r["p95_ms"]) for r in runs])
@@ -74,7 +77,7 @@ def main():
             ko_cell = f"**{ko_med}**" if ko_med != "0" else "0"
             ob_cell = f"**{overbook}**" if overbook else "0"
             out.append(
-                f"| {LABELS[key]} | {confirmed} | {ob_cell} | {dup} | {ko_cell} "
+                f"| {LABELS[key]} | {confirmed} | {ob_cell} | {ko_cell} "
                 f"| {mean_med} <sub>({mean_rng})</sub> | {p95_med} | {tps_med} | {n} |")
 
     out.append("\n### ② vs ④ — 라운드별 짝비교 (평균 응답, ms)\n")
