@@ -11,8 +11,7 @@
 - [캠페인 매니페스트](benchmark/campaigns/2026-09-25-williams-v2-01/manifest.md)
 - [Phase A 환경 스냅샷](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-a.json)
 - [Phase B 환경 스냅샷](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-b.json)
-- [`scripts/benchmark.sh`](../scripts/benchmark.sh) ·
-  [`scripts/validate_benchmark_campaign.py`](../scripts/validate_benchmark_campaign.py) ·
+- [`scripts/benchmark_capacity.py`](../scripts/benchmark_capacity.py) ·
   [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)
 
 ③(멱등성 키)과 ⑥(분산 락)은 도메인 전제가 맞지 않아 생략했으므로 측정 대상이 아니다
@@ -103,13 +102,11 @@ successful-work throughput으로 읽으면 안 된다. `n=10`은 요청 수가 �
 
 ### 2-4. 공개 검증 경계
 
-다음 명령이 캠페인 ID·두 Phase·행 수·성공 상태·Williams 순서·환경 해시·상한·고유 슬롯·TPS
-재계산 가능성을 검증한다. incomplete·failed·혼합·불균형 캠페인은 complete로 통과하지 못하며,
-완전한 캠페인만 v2 정본으로 승격할 수 있다.
+요약기는 캠페인 ID·두 Phase·행 수·성공 상태·Williams 순서·환경 해시·상한·고유 슬롯·TPS
+재계산 가능성을 먼저 검증한다. incomplete·failed·혼합·불균형 캠페인은 표를 출력하기 전에
+거부한다. 새 실행에서는 사용자가 지정한 CSV 자체가 결과이며 별도 정본 승격 단계는 없다.
 
 ```bash
-python3 scripts/validate_benchmark_campaign.py \
-  docs/benchmark/raw-runs-v2.csv --require complete --rounds 10
 python3 scripts/summarize_benchmark.py docs/benchmark/raw-runs-v2.csv
 ```
 
@@ -358,28 +355,24 @@ Hikari 기본 풀과 SQL·예외 로그의 설정 비용이 전략별로 다르�
 docker compose up -d
 BENCHMARK_REPRO_DIR=$(mktemp -d)
 BENCHMARK_REPRO_ID="repro-$(date +%Y%m%d-%H%M%S)"
-BENCHMARK_REPRO_ROOT="$BENCHMARK_REPRO_DIR/campaigns"
-BENCHMARK_REPRO_CANONICAL="$BENCHMARK_REPRO_DIR/raw-runs-v2.csv"
+BENCHMARK_REPRO_CSV="$BENCHMARK_REPRO_DIR/raw-runs-v2.csv"
 
 ./gradlew bootRun --args='--spring.profiles.active=benchmark'
-scripts/benchmark.sh \
+python3 scripts/benchmark_capacity.py \
   --campaign-id "$BENCHMARK_REPRO_ID" --phase a --rounds 10 \
-  --campaign-root "$BENCHMARK_REPRO_ROOT" \
-  --canonical-out "$BENCHMARK_REPRO_CANONICAL"
+  --out "$BENCHMARK_REPRO_CSV"
 
 # 첫 앱을 종료하고 8080 포트가 닫힌 뒤 새 JVM으로 실행
 ./gradlew bootRun \
   --args='--spring.profiles.active=benchmark --reservation.optimistic.max-attempts=20'
-scripts/benchmark.sh \
+python3 scripts/benchmark_capacity.py \
   --campaign-id "$BENCHMARK_REPRO_ID" --phase b --rounds 10 \
-  --campaign-root "$BENCHMARK_REPRO_ROOT" \
-  --canonical-out "$BENCHMARK_REPRO_CANONICAL"
+  --out "$BENCHMARK_REPRO_CSV"
 
-python3 scripts/validate_benchmark_campaign.py \
-  "$BENCHMARK_REPRO_ROOT/$BENCHMARK_REPRO_ID/raw-runs.csv" \
-  --require complete --rounds 10
-python3 scripts/summarize_benchmark.py "$BENCHMARK_REPRO_CANONICAL"
+python3 scripts/summarize_benchmark.py "$BENCHMARK_REPRO_CSV"
 ```
 
-runner는 각 Phase에서 전체 10-treatment warmup을 끝낸 뒤 측정을 시작한다. Phase A가 완전해야
-Phase B를 시작할 수 있고, 두 Phase의 200행이 모두 검증된 뒤에만 지정한 v2 정본으로 승격한다.
+실행기는 각 Phase에서 전체 10-treatment warmup을 끝낸 뒤 측정을 시작한다. Phase A가 완전해야
+Phase B를 시작할 수 있고, 두 Phase의 200행이 모두 검증돼야 요약기가 결과를 출력한다. 환경 응답은
+각각 `$BENCHMARK_REPRO_CSV.phase-a-environment.json`과
+`$BENCHMARK_REPRO_CSV.phase-b-environment.json`에 함께 남는다.

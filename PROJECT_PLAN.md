@@ -205,6 +205,8 @@ WHERE id = ? AND remaining > 0;
       2026-09-24 고정 순서 60회는 변경 불가한 `methodology-v1-fixed-order`
       [원시 자료](docs/benchmark/raw-runs.csv)와 [실행 기록](docs/benchmark/2026-09-24-controlled-run.md)으로
       보존한다.
+      활성 도구는 `scripts/benchmark_capacity.py` 한 실행기와
+      `scripts/summarize_benchmark.py` 한 요약기로 유지한다.
 
 ---
 

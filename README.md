@@ -68,6 +68,8 @@ docker compose ps          # 두 컨테이너가 healthy 인지 확인
 
 접속 기본값은 `application.yml`에 맞춰져 있어 컨테이너만 띄우면 그대로 붙습니다. 포트 등을 바꾸려면 환경변수(`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`)로 덮어쓰면 됩니다. 실험을 같은 조건에서 다시 돌리려면 `docker compose down -v`로 볼륨까지 초기화합니다.
 
+정원 경쟁 벤치마크는 [`scripts/benchmark_capacity.py`](scripts/benchmark_capacity.py)가 Williams 실행 순서·환경 검증·Gatling·DB 정합성·CSV 기록을 담당하고, [`scripts/summarize_benchmark.py`](scripts/summarize_benchmark.py)가 완전한 Phase A+B만 검증해 표와 차트를 만듭니다. 두 번의 앱 기동을 포함한 전체 재현 명령은 [벤치마크 문서 9절](docs/STEP2-DEFENSE-BENCHMARK.md#9-재현)에 있습니다.
+
 ## 스키마
 
 스키마는 Hibernate가 생성하지 않고(`ddl-auto: validate`) **Flyway 마이그레이션으로 버전 관리**합니다. 방어 수단이 단계별로 하나씩 들어오는 과정 자체가 이 프로젝트의 논지이므로, 그 과정이 마이그레이션 이력에 남아야 하기 때문입니다. 테스트도 동일한 마이그레이션을 사용합니다 — 제약이 실제로 지켜지는지가 곧 측정 대상이라, 테스트가 다른 스키마를 보면 안 됩니다.

@@ -266,8 +266,7 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
   [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)와
   [실행 기록](benchmark/2026-09-24-controlled-run.md)으로, 이전 기본 프로필 60행은
   [`benchmark/archive`](benchmark/archive/2026-09-04-manifest.md)에 보존한다
-  - 측정 자동화: [`scripts/benchmark.sh`](../scripts/benchmark.sh)(Williams 균형 순서 캠페인) ·
-    [`scripts/parse_gatling_report.py`](../scripts/parse_gatling_report.py)(이름표로 리포트 식별) ·
+  - 측정 자동화: [`scripts/benchmark_capacity.py`](../scripts/benchmark_capacity.py)(Williams 계획·환경·Gatling·DB·CSV 검증 통합) ·
     [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)(중앙값·범위·짝비교 표)
 
 ### 3단계. 트레이드오프 분석 및 최종 선택
