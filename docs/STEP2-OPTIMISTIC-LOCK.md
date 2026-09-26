@@ -13,7 +13,7 @@
 > Phase B의 상한 20은 **서로 다른 앱 기동의 민감도 분석**이며, 각 상한은 같은 Phase의 대조
 > 전략과 비교한다. 이 문서에 남긴 574ms·TPS 40·70건 소진은 ⑤ 구현 당시 예비 측정이고,
 > 2026-09-24 고정 순서 60회는 변경 불가한 `methodology-v1-fixed-order`
-> [원시 자료](benchmark/raw-runs.csv)와 [실행 기록](benchmark/2026-09-24-controlled-run.md)으로만
+> [원시 자료](benchmark/archive/2026-09-24/raw-runs.csv)와 [실행 기록](benchmark/archive/2026-09-24/2026-09-24-controlled-run.md)으로만
 > 보존한다. 이 역사 수치를 현재 정본과 섞지 않는다.
 
 관련 코드:

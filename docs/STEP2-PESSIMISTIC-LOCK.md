@@ -10,8 +10,8 @@
 > **측정 범위 주의.** 이 문서 4-2의 7쌍 수치는 ④ 구현 당시의 예비 측정이다. 현재 정본인
 > [2026-09-25 방법론 v2 재측정](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)은 Phase당
 > 10라운드의 Williams 균형 순서를 사용한다. 2026-09-24 고정 순서 60회도 변경 불가한
-> `methodology-v1-fixed-order` [원시 자료](benchmark/raw-runs.csv)와
-> [실행 기록](benchmark/2026-09-24-controlled-run.md)으로만 보존한다. 역사 수치와 당시 해석은
+> `methodology-v1-fixed-order` [원시 자료](benchmark/archive/2026-09-24/raw-runs.csv)와
+> [실행 기록](benchmark/archive/2026-09-24/2026-09-24-controlled-run.md)으로만 보존한다. 역사 수치와 당시 해석은
 > 구현 과정을 설명할 뿐 현재 선택 근거로 사용하지 않는다.
 
 관련 코드:

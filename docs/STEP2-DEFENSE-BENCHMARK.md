@@ -8,9 +8,8 @@
 현재 측정 자산:
 
 - [동일 요청 25행](benchmark/duplicate-runs.csv) · [동일 요청 실행 기록](benchmark/2026-09-25-duplicate-request-run.md)
-- [`scripts/benchmark-duplicates.sh`](../scripts/benchmark-duplicates.sh) · [`scripts/duplicate_benchmark.py`](../scripts/duplicate_benchmark.py)
+- [동일 요청 실행·검증·요약](../scripts/benchmark_duplicates.py)
 - [v2 정본 `raw-runs-v2.csv`](benchmark/raw-runs-v2.csv)
-- [성공 캠페인 원시 데이터](benchmark/campaigns/2026-09-25-williams-v2-01/raw-runs.csv)
 - [캠페인 매니페스트](benchmark/campaigns/2026-09-25-williams-v2-01/manifest.md)
 - [Phase A 환경 스냅샷](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-a.json)
 - [Phase B 환경 스냅샷](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-b.json)
@@ -350,9 +349,9 @@ API·다른 저장소처럼 DB 밖의 원자성이 실제 요구사항으로 들
 파일은 당시 결론을 재현하는 **변경 불가 역사 증거**이며, 현재 성능 표나 우열 주장의 근거로 쓰지
 않는다.
 
-- [v1 원시 데이터 `raw-runs.csv`](benchmark/raw-runs.csv)
-- [2026-09-24 통제 실행 기록](benchmark/2026-09-24-controlled-run.md)
-- [당시 낙관적 시도 분포](benchmark/optimistic-attempt-distribution-cap20.json)
+- [v1 원시 데이터 `raw-runs.csv`](benchmark/archive/2026-09-24/raw-runs.csv)
+- [2026-09-24 통제 실행 기록](benchmark/archive/2026-09-24/2026-09-24-controlled-run.md)
+- [당시 낙관적 시도 분포](benchmark/archive/2026-09-24/optimistic-attempt-distribution-cap20.json)
 
 ### 초기 측정 — 2026-09-04
 
@@ -377,6 +376,18 @@ Hikari 기본 풀과 SQL·예외 로그의 설정 비용이 전략별로 다르�
   ① UNIQUE 위에서 해결한다.
 
 ## 9. 재현
+
+실행 도구는 세 개다. 모두 Python 표준 라이브러리를 사용한다.
+
+| 파일 | 역할 |
+|---|---|
+| `scripts/benchmark_capacity.py` | 정원 경쟁 실행·DB 조회·CSV 검증, 공통 환경 검사 |
+| `scripts/summarize_benchmark.py` | 정원 경쟁 CSV를 읽어 통계표 생성 |
+| `scripts/benchmark_duplicates.py` | 동일 요청 실험의 실행·검증·요약 |
+
+실제 HTTP 부하는 `src/gatling/java`의 시뮬레이션이 만들며, 스크립트는 이를 반복 실행하고 결과를 수집한다.
+새 결과는 지정한 CSV에 한 행씩 기록한다. 실패하면 즉시 중단하고 앞선 기록을 보존하며,
+요약기는 불완전한 실험을 거부한다. `scripts/tests`의 세 테스트 파일은 이 동작을 확인한다.
 
 체크인된 정본을 덮어쓰거나 이미 사용한 캠페인 ID를 재사용하지 않도록 별도 임시 경로를 쓴다.
 
@@ -410,9 +421,8 @@ Phase B를 시작할 수 있고, 두 Phase의 200행이 모두 검증돼야 요�
 
 ```bash
 DUPLICATE_REPRO_DIR=$(mktemp -d)
-scripts/benchmark-duplicates.sh --out "$DUPLICATE_REPRO_DIR/duplicate-runs.csv"
-python3 scripts/duplicate_benchmark.py summarize "$DUPLICATE_REPRO_DIR/duplicate-runs.csv" --rounds 5
+python3 scripts/benchmark_duplicates.py run --out "$DUPLICATE_REPRO_DIR/duplicate-runs.csv"
+python3 scripts/benchmark_duplicates.py summarize "$DUPLICATE_REPRO_DIR/duplicate-runs.csv" --rounds 5
 ```
 
-동일 요청 실행기는 `validate_benchmark_environment.py`로 풀·로그·상한 5를 확인한다. 정원 경쟁 v2는
-`benchmark_capacity.py` 내부 검증을 사용한다. 두 workload의 원시 행과 성능 해석은 합치지 않는다.
+두 실행기는 `benchmark_capacity.py`의 환경 검사 함수를 공유한다. 동일 요청 실행은 상한 5를 사용하며, 두 workload의 원시 행과 성능 해석은 합치지 않는다.

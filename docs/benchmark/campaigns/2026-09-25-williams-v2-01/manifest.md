@@ -1,13 +1,15 @@
 # Benchmark Campaign 2026-09-25-williams-v2-01
 
+> 당시 실행 환경과 명령의 기록이다. 현재 실행 명령은 [재현 절차](../../../STEP2-DEFENSE-BENCHMARK.md#9-재현), 원시 결과는 [200회 CSV](../../raw-runs-v2.csv)를 따른다.
+
 ## Campaign
 
 - campaign_id: 2026-09-25-williams-v2-01
 - rounds_per_phase: 10
 - schedule_version: williams-10-v1
 - predecessor_methodology: methodology-v1-fixed-order
-- predecessor_raw_runs: [docs/benchmark/raw-runs.csv](../../raw-runs.csv)
-- predecessor_execution_record: [docs/benchmark/2026-09-24-controlled-run.md](../../2026-09-24-controlled-run.md)
+- predecessor_raw_runs: [docs/benchmark/archive/2026-09-24/raw-runs.csv](../../archive/2026-09-24/raw-runs.csv)
+- predecessor_execution_record: [docs/benchmark/archive/2026-09-24/2026-09-24-controlled-run.md](../../archive/2026-09-24/2026-09-24-controlled-run.md)
 - created_at: 2026-09-25T01:10:26
 - gatling_version: 3.13.5
 

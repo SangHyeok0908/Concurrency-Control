@@ -3,12 +3,12 @@
 이 파일은 서로 다른 지원자가 슬롯 정원을 경쟁한 [`raw-runs.csv`](raw-runs.csv) 60행과
 [`optimistic-attempt-distribution-cap20.json`](optimistic-attempt-distribution-cap20.json)이 어떤
 환경에서 만들어졌는지 고정한다. 이전 기본 프로필 측정은
-[`archive/2026-09-04-manifest.md`](archive/2026-09-04-manifest.md)와 함께 별도 보존한다.
+[`../2026-09-04-manifest.md`](../2026-09-04-manifest.md)와 함께 별도 보존한다.
 
 이 workload는 요청마다 다른 applicant를 사용한다. 따라서 원시 CSV의 `duplicates=0`은 동일
 `(applicant_id, slot_id)` 재요청 방어를 검증한 값이 아니다. 그 질문은
-[2026-09-25 동일 요청 실행 기록](2026-09-25-duplicate-request-run.md)과
-[`duplicate-runs.csv`](duplicate-runs.csv)에서 별도로 검증한다.
+[2026-09-25 동일 요청 실행 기록](../../2026-09-25-duplicate-request-run.md)과
+[`duplicate-runs.csv`](../../duplicate-runs.csv)에서 별도로 검증한다.
 
 ## 실행 환경
 
@@ -44,7 +44,9 @@
 커넥션 생성 비용이 붙지 않게 했다. root logger까지 끈 이유는 락 없는 전략의 데드락 스택트레이스가
 전략마다 다른 콘솔 I/O 비용으로 섞이는 것을 막기 위해서다.
 
-## 실행 순서
+## 당시 실행 순서
+
+아래는 과거 도구로 실행한 기록이다. 현재 재현 절차는 [벤치마크 문서](../../../STEP2-DEFENSE-BENCHMARK.md#9-재현)를 따른다.
 
 ```bash
 ./gradlew bootRun --args='--spring.profiles.active=benchmark'
