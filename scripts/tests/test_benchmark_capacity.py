@@ -195,6 +195,22 @@ class EnvironmentTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "optimisticMaxAttempts"):
             benchmark.validate_environment(payload, 20)
 
+    def test_rejects_uncontrolled_profiles_pool_and_logs(self):
+        for field, wrong in (("activeProfiles", ["test", "benchmark"]),
+                             ("maximumPoolSize", 10), ("minimumIdle", 10),
+                             ("showSql", True), ("formatSql", True),
+                             ("useSqlComments", True), ("sqlLogLevel", "DEBUG"),
+                             ("bindLogLevel", "TRACE"), ("rootLogLevel", "INFO")):
+            with self.subTest(field=field):
+                payload = valid_environment()
+                payload[field] = wrong
+                with self.assertRaisesRegex(ValueError, field):
+                    benchmark.validate_environment(payload, 5)
+        payload = valid_environment()
+        payload["totalConnections"] = 73
+        with self.assertRaises(benchmark.EnvironmentNotReady):
+            benchmark.validate_environment(payload, 5)
+
     def test_non_pool_mismatch_is_not_treated_as_a_retryable_pool_warmup(self):
         payload = valid_environment(max_attempts=5)
         payload["totalConnections"] = 99

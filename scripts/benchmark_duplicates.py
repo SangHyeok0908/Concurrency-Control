@@ -4,11 +4,15 @@
 import argparse
 import csv
 import json
-import os
 import sys
-import tempfile
 from collections import Counter
 from pathlib import Path
+from datetime import datetime
+
+if __package__:
+    from . import benchmark_capacity as capacity
+else:
+    import benchmark_capacity as capacity
 
 
 STATUS_KEYS = ("201", "409", "500", "503", "other", "no_response")
@@ -301,38 +305,6 @@ def validate_campaign(rows, rounds):
     return errors
 
 
-def _serialise_row(row):
-    return {
-        field: (
-            "true" if value is True else "false" if value is False else str(value)
-        )
-        for field, value in row.items()
-    }
-
-
-def _write_rows_atomic(path, rows):
-    path = Path(path)
-    if not path.parent.is_dir():
-        raise ValueError("output directory does not exist: %s" % path.parent)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=".%s." % path.name, suffix=".tmp"
-    )
-    try:
-        with os.fdopen(descriptor, "w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
-            writer.writeheader()
-            writer.writerows(_serialise_row(row) for row in rows)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    except BaseException:
-        try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
-
-
 def _read_rows(path):
     path = Path(path)
     with path.open(newline="") as handle:
@@ -342,54 +314,86 @@ def _read_rows(path):
         return list(reader)
 
 
-def record(args):
-    output = Path(args.output)
-    if args.mode == "create" and output.exists():
-        raise ValueError("output already exists: %s" % output)
-    if args.mode == "append" and not output.is_file():
-        raise ValueError("append output does not exist: %s" % output)
+def seed_ids():
+    sql = ("SELECT (SELECT COALESCE(MAX(id), 0) FROM interview_slot), "
+           "(SELECT COALESCE(MAX(id), 0) FROM applicant)")
+    slot_id, applicant_id = map(int, capacity.mysql_query(capacity.DEFAULT_MYSQL_CONTAINER, sql).split())
+    if min(slot_id, applicant_id) < 0:
+        raise ValueError("invalid seed IDs")
+    return slot_id, applicant_id
 
-    gatling_log = Path(args.gatling_log).read_text()
-    counts = parse_status_counts(gatling_log)
-    gatling_counts = parse_gatling_counts(gatling_log)
-    row = {
-        "schema_version": 1,
-        "ts": args.timestamp,
-        "round": args.round,
-        "position": args.position,
-        "strategy": args.strategy,
-        "workload": "same-applicant-slot",
-        "capacity": args.capacity,
-        "requests": args.requests,
-        "slot_id": args.slot_id,
-        "applicant_id": args.applicant_id,
-        "http_201": counts["201"],
-        "http_409": counts["409"],
-        "http_500": counts["500"],
-        "http_503": counts["503"],
-        "http_other": counts["other"],
-        "http_no_response": counts["no_response"],
-        "ok": gatling_counts["ok"],
-        "ko": gatling_counts["ko"],
-        "remaining": args.remaining,
-        "confirmed": args.confirmed,
-        "pair_reservations": args.pair_reservations,
-        "duplicate_rows": args.duplicate_rows,
-        "seats_consumed": args.capacity - args.remaining,
-    }
-    errors = validate_row(row)
-    row["invariant_pass"] = not errors
-    rows = [] if args.mode == "create" else _read_rows(output)
-    _write_rows_atomic(output, rows + [row])
 
-    if errors:
-        for error in errors:
-            print("duplicate benchmark invariant failed: " + error, file=sys.stderr)
-        return 1
-    print(
-        "duplicate benchmark row verified: strategy=%s round=%d position=%d"
-        % (args.strategy, args.round, args.position)
+def measure(args, round_number, position, strategy):
+    before_slot, before_applicant = seed_ids()
+    log = capacity.run_command([
+        capacity.DEFAULT_GRADLEW, "gatlingRun", "--console=plain", "-q",
+        "--simulation", "com.interview.reservation.loadtest.DuplicateReservationSimulation",
+        "-DbaseUrl=" + capacity.DEFAULT_BASE_URL, "-Dstrategy=" + strategy,
+        "-Dcapacity=%d" % args.capacity, "-Drequests=%d" % args.requests,
+    ], capacity.PROJECT_ROOT)
+    slot_id, applicant_id = seed_ids()
+    if slot_id <= before_slot or applicant_id <= before_applicant:
+        raise ValueError("Gatling did not create a new slot and applicant")
+
+    sql = (
+        "SELECT s.remaining, "
+        "(SELECT COUNT(*) FROM reservation WHERE slot_id = s.id AND status = 'CONFIRMED'), "
+        "(SELECT COUNT(*) FROM reservation WHERE slot_id = s.id AND applicant_id = %d), "
+        "(SELECT COALESCE(SUM(d.c - 1), 0) FROM "
+        "(SELECT COUNT(*) c FROM reservation WHERE slot_id = %d "
+        "GROUP BY applicant_id, slot_id HAVING COUNT(*) > 1) d) "
+        "FROM interview_slot s WHERE s.id = %d" % (applicant_id, slot_id, slot_id)
     )
+    remaining, confirmed, pairs, duplicates = map(
+        int, capacity.mysql_query(capacity.DEFAULT_MYSQL_CONTAINER, sql).split()
+    )
+    counts = parse_status_counts(log)
+    row = {
+        "schema_version": 1, "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "round": round_number, "position": position, "strategy": strategy,
+        "workload": "same-applicant-slot", "capacity": args.capacity, "requests": args.requests,
+        "slot_id": slot_id, "applicant_id": applicant_id,
+        **{"http_" + key: value for key, value in counts.items()},
+        **parse_gatling_counts(log),
+        "remaining": remaining, "confirmed": confirmed, "pair_reservations": pairs,
+        "duplicate_rows": duplicates, "seats_consumed": args.capacity - remaining,
+    }
+    return row
+
+
+def run(args):
+    plan = [
+        (round_number, position, args.strategies[(round_number + position - 2) % len(args.strategies)])
+        for round_number in range(1, args.rounds + 1)
+        for position in range(1, len(args.strategies) + 1)
+    ]
+    if args.print_plan:
+        writer = csv.writer(sys.stdout, lineterminator="\n")
+        writer.writerow(("round", "position", "strategy", "capacity", "requests"))
+        writer.writerows((*entry, args.capacity, args.requests) for entry in plan)
+        return 0
+
+    output = args.out
+    if output.exists() or output.is_symlink():
+        raise ValueError("output already exists: %s" % output)
+    if not output.parent.is_dir():
+        raise ValueError("output directory does not exist: %s" % output.parent)
+    capacity.wait_for_environment(capacity.DEFAULT_BASE_URL, 5)
+    with output.open("x", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, lineterminator="\n")
+        writer.writeheader()
+        for round_number, position, strategy in plan:
+            row = measure(args, round_number, position, strategy)
+            errors = validate_row(row)
+            row["invariant_pass"] = "false" if errors else "true"
+            writer.writerow(row)
+            handle.flush()
+            if errors:
+                raise ValueError("; ".join(errors))
+            print("round=%d position=%d %s: 예약 1건·좌석 소모 1개 확인" %
+                  (round_number, position, strategy))
+    if len(args.strategies) == len(STRATEGIES):
+        return summarize(argparse.Namespace(csv=output, rounds=args.rounds))
     return 0
 
 
@@ -435,36 +439,46 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    record_parser = subparsers.add_parser("record")
-    record_parser.add_argument("output")
-    record_parser.add_argument("--mode", required=True, choices=("create", "append"))
-    record_parser.add_argument("--timestamp", required=True)
-    record_parser.add_argument("--round", required=True, type=int)
-    record_parser.add_argument("--position", required=True, type=int)
-    record_parser.add_argument("--strategy", required=True, choices=STRATEGIES)
-    record_parser.add_argument("--capacity", required=True, type=int)
-    record_parser.add_argument("--requests", required=True, type=int)
-    record_parser.add_argument("--slot-id", required=True, type=int)
-    record_parser.add_argument("--applicant-id", required=True, type=int)
-    record_parser.add_argument("--gatling-log", required=True)
-    record_parser.add_argument("--remaining", required=True, type=int)
-    record_parser.add_argument("--confirmed", required=True, type=int)
-    record_parser.add_argument("--pair-reservations", required=True, type=int)
-    record_parser.add_argument("--duplicate-rows", required=True, type=int)
+    runner = subparsers.add_parser("run", help="run the identical-request experiment")
+    runner.add_argument("--capacity", type=int, default=200)
+    runner.add_argument("--requests", type=int, default=200)
+    runner.add_argument("--rounds", type=int, default=5)
+    runner.add_argument("--strategies", default=",".join(STRATEGIES))
+    runner.add_argument("--out", type=Path)
+    runner.add_argument("--print-plan", action="store_true")
 
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("csv")
     summarize_parser.add_argument("--rounds", required=True, type=int)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "run":
+        if min(args.capacity, args.requests, args.rounds) <= 0:
+            parser.error("capacity, requests and rounds must be positive")
+        if args.capacity < args.requests:
+            parser.error("capacity must be at least requests")
+        args.strategies = args.strategies.split(",")
+        for strategy in args.strategies:
+            if strategy not in STRATEGIES:
+                parser.error("unknown strategy: " + strategy)
+        if len(set(args.strategies)) != len(args.strategies):
+            parser.error("duplicate strategy")
+        if len(args.strategies) == len(STRATEGIES):
+            if args.rounds != 5:
+                parser.error("full campaign requires exactly 5 rounds")
+            if tuple(args.strategies) != STRATEGIES:
+                parser.error("full campaign requires the standard strategy order")
+        if not args.print_plan and args.out is None:
+            parser.error("--out is required unless --print-plan is used")
+    return args
 
 
 def main(argv=None):
     args = parse_args(argv)
     try:
-        if args.command == "record":
-            return record(args)
+        if args.command == "run":
+            return run(args)
         return summarize(args)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RuntimeError, csv.Error) as error:
         print("duplicate benchmark failed: %s" % error, file=sys.stderr)
         return 2
 

@@ -364,6 +364,25 @@ def environment_path(output: Path, phase: str) -> Path:
     return Path(str(output) + ".phase-%s-environment.json" % phase)
 
 
+def wait_for_environment(base_url: str, expected_max_attempts: int, wait_seconds=None) -> dict:
+    """Wait for the controlled connection pool; reject other setting mismatches."""
+    if wait_seconds is None:
+        wait_seconds = _environment_wait_seconds()
+    if isinstance(wait_seconds, bool) or wait_seconds < 0:
+        raise ValueError("ENVIRONMENT_WAIT_SECONDS must be a non-negative integer")
+
+    waited = 0
+    while True:
+        payload = fetch_json(base_url + "/api/metrics/benchmark-environment")
+        try:
+            return validate_environment(payload, expected_max_attempts)
+        except EnvironmentNotReady:
+            if waited >= wait_seconds:
+                raise
+            waited += 1
+            time.sleep(1)
+
+
 def capture_environment(
     output: Path,
     phase: str,
@@ -376,20 +395,7 @@ def capture_environment(
     destination = environment_path(output, phase)
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("environment snapshot already exists: %s" % destination)
-    if isinstance(wait_seconds, bool) or wait_seconds < 0:
-        raise ValueError("ENVIRONMENT_WAIT_SECONDS must be a non-negative integer")
-
-    waited = 0
-    while True:
-        payload = fetch_json(base_url + "/api/metrics/benchmark-environment")
-        try:
-            environment = validate_environment(payload, expected_max_attempts)
-            break
-        except EnvironmentNotReady:
-            if waited >= wait_seconds:
-                raise
-            waited += 1
-            time.sleep(1)
+    environment = wait_for_environment(base_url, expected_max_attempts, wait_seconds)
 
     canonical = (
         json.dumps(
