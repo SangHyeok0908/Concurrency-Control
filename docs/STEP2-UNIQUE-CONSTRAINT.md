@@ -40,8 +40,8 @@
 ## 3. 설계 — 방어는 baseline을 덮어쓰지 않고 *추가*한다
 
 1단계 락 없는 경로(`ReservationService.reserve`, `POST /api/reservations`)는 **그대로 보존**한다.
-방어는 전략(`ReservationStrategy`) 구현체로 나란히 추가하고 `POST /api/reservations/{strategy}`로
-골라 때린다. 그래야 같은 Gatling 부하로 방어별 before/after를 비교할 수 있다(⑦ 벤치마크).
+방어는 전략(`ReservationStrategy`) 구현체로 추가하고 `POST /api/reservations/{strategy}`로 선택한다.
+이 구조의 보존 원칙은 [브랜치 전략](STEP2-3-BRANCH-STRATEGY.md#baseline은-보존하고-방어는-additive)에 있다.
 
 | 경로 | 전략 | 동작 |
 |---|---|---|
@@ -94,14 +94,9 @@ baseline 오버부킹 프로브는 "간헐적으로만" 터져 관찰만 했지�
 
 ### 5-3. 실제 HTTP 동시 재요청 25회
 
-정원 200 슬롯과 지원자 한 명을 매 실행 새로 만들고 동일 `(applicantId, slotId)` 요청 200건을
-`atOnceUsers`로 보냈다. 다섯 예약 경로를 각 5회 실행한 총 5,000건에서 DB 예약 행과 좌석 소모는
-매번 정확히 1이었다. 이는 V2 UNIQUE가 특정 전략 코드가 아니라 테이블 전역의 최후 방어선이라는
-뜻이다.
-
-`/unique` 5회에서는 첫 요청 5건이 201, 나머지 995건이 모두 409였고 500·503·기타·무응답은
-0이었다. 반면 UNIQUE 위반을 도메인 예외로 번역하지 않는 다른 네 경로는 데이터는 지켰지만 각
-995건을 500으로 반환했다. 따라서 **DB 중복 방어**와 **재요청의 HTTP 의미**는 별도 계약이다.
+동일 요청 25회에서 다섯 경로 모두 예약 행과 좌석 소모를 실행마다 1개로 지켰다. 그러나
+`/unique`만 중복을 409로 번역했고, 다른 경로는 500을 반환했다. 이 차이는 V2의 전역 DB 제약과
+`unique` 전략의 예외 번역이 맡는 역할이 다름을 보여준다.
 
 원시 25행과 환경·해시는 [동일 요청 실행 기록](benchmark/2026-09-25-duplicate-request-run.md),
 전체 전략 해석은 [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md#3-2-동일-요청-25회--db-안전성과-http-의미)에 있다.

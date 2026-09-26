@@ -59,16 +59,9 @@ UPDATE 하나로 **부족해지는 지점**을 보여주기 위한 것이지 오
 
 ## 3. 설계 — baseline 을 덮어쓰지 않고 *추가*한다
 
-1단계 락 없는 경로(`ReservationService.reserve`, `POST /api/reservations`)와 ①(`unique`)은
-**그대로 보존**한다. 방어는 전략(`ReservationStrategy`) 구현체로 나란히 추가하고
-`POST /api/reservations/{strategy}` 로 골라 때린다. 그래야 같은 Gatling 부하로 방어별
-before/after 를 비교할 수 있다(⑦ 벤치마크).
-
-| 경로 | 전략 | 오버부킹 |
-|---|---|---|
-| `POST /api/reservations/baseline` | `ReservationService` (락 없음) | **발생**(간헐적) |
-| `POST /api/reservations/unique` | `UniqueConstraintReservationStrategy` | **발생** — UNIQUE 는 중복만 막음 |
-| `POST /api/reservations/conditional` | `ConditionalUpdateReservationStrategy` | **0** — 원자적 조건부 UPDATE |
+baseline과 ①(`unique`)을 보존하고 `/api/reservations/conditional` 경로에 ②를 추가했다.
+공통 전략 경로와 보존 원칙은 [①의 설계](STEP2-UNIQUE-CONSTRAINT.md)와
+[브랜치 전략](STEP2-3-BRANCH-STRATEGY.md#baseline은-보존하고-방어는-additive)에 있다.
 
 **구현 흐름.** 지원자 존재를 먼저 확인(404)한 뒤 조건부 UPDATE 를 던진다. 갱신 행이 1이면
 예약을 INSERT, 0이면 `existsById` 로 만석(`SlotFullException`)과 없는 슬롯(`NotFoundException`)을
@@ -125,15 +118,10 @@ UPDATE만으로 오버부킹이 결정적으로 0이다. 그렇다고 ②가 언
 | 새 값이 **앱에서 계산**돼야 하는 임의의 read-modify-write<br>(예: 대기열 순번 배정, 좌석별 속성) | 델타가 `-1`처럼 단순하지 않아 조건부 UPDATE로 표현 불가 | ⑤ 낙관적 락(`@Version`)이 "읽은 뒤 아무도 안 건드렸다"를 커밋 시점에 검증 |
 | 임계 구역이 **단일 DB 밖**으로 확장<br>(예: 외부 결제 API·다른 서비스 DB·정확히 한 번 알림) | 원자성의 근거인 InnoDB 행 락이 DB 바깥엔 닿지 못함 | 현재 범위 밖 — 분산 락 생략 판단과 재검토 조건은 [브랜치 전략 ⑥](STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock) 참고 |
 
-그래서 당시 ⑦ 벤치마크의 예상 결론은 "락이 정합성을 **더** 준다"가 아니었다. 조건부 UPDATE도
-락도 오버부킹 0이며, 조건부 UPDATE의 처리량이 더 높을 것이라고 예상했다. 현재 정본인
-[2026-09-25 방법론 v2 재측정](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)에서 낮은 경합
-평균 응답 중앙값은 Phase A/B 각각 ② 125.5/126ms, ④ 152/140ms였고 Phase 내부 라운드 비교는
-두 Phase 모두 ②가 9/10 앞섰다. 극단 경합은 ② 117/122.5ms, ④ 88.5/97.5ms였고 ④가
-Phase A 10/10, Phase B 9/10 앞섰다. 다만 같은 라운드에서도 두 실행의 Williams 직렬 위치와
-실행 시점은 다르므로 이 차이를 잠금 방식 하나의 인과 효과로 돌리지 않는다. 현재 선택 근거는
-한 행·한 산술 가드를 가장 작은 DML로 표현한다는 점으로 한정한다. 락은
-**문제가 다중 행·임의 계산·다중 자원으로 확장될 때** 우선 검토한다 — "도구를 문제 모양에 맞춰
-골랐다"가 이 프로젝트의 논지이며, ④⑤는 그 경계를 실증하기 위한 대조군이다.
+당시에는 조건부 UPDATE의 처리량이 더 높을 것으로 예상했지만,
+[방법론 v2의 Phase 내부 비교](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)는 경합 지점에
+따라 ②와 ④의 응답시간 방향이 달랐다. 직렬 위치와 실행 시점 차이도 남아 있어 관측 차이를 잠금
+방식 하나의 인과 효과로 돌리지 않는다. ②의 선택 근거는 현재 불변식을 한 행의 조건부 DML로
+표현할 수 있다는 점이다. 다중 행·임의 계산·다중 자원으로 문제가 확장되면 ④⑤를 다시 검토한다.
 위 표의 **세 번째 행은 이 도메인에 실물이 없어 대조군이 아니라 전제로만 남는다** — 그것이 ⑥을
 생략한 이유다.
