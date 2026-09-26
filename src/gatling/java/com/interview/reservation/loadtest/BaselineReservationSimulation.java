@@ -12,6 +12,8 @@ import io.gatling.javaapi.core.ScenarioBuilder;
 import io.gatling.javaapi.core.Simulation;
 import io.gatling.javaapi.http.HttpProtocolBuilder;
 import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 1단계 baseline HTTP 부하 테스트.
@@ -43,6 +45,10 @@ public class BaselineReservationSimulation extends Simulation {
     private static final String BASE_URL = System.getProperty("baseUrl", "http://localhost:8080");
     private static final int CAPACITY = Integer.getInteger("capacity", 100);
     private static final int CONTENDERS = Integer.getInteger("contenders", 500);
+
+    private static final AtomicLong BURST_START_EPOCH_MS = new AtomicLong(Long.MAX_VALUE);
+    private static final AtomicLong BURST_END_EPOCH_MS = new AtomicLong(Long.MIN_VALUE);
+    private static final AtomicInteger BURST_COMPLETED = new AtomicInteger();
 
     /** 빈 값이면 1단계 baseline 경로 그대로 — step1 측정 자산을 훼손하지 않는다. */
     private static final String STRATEGY = System.getProperty("strategy", "");
@@ -101,6 +107,10 @@ public class BaselineReservationSimulation extends Simulation {
     /** 서로 다른 지원자가 같은 슬롯 하나를 두고 동시에 예약을 시도한다. */
     private final ScenarioBuilder contention = scenario("reservation contention")
             .feed(SeedState.applicantFeeder())
+            .exec(session -> {
+                BURST_START_EPOCH_MS.accumulateAndGet(System.currentTimeMillis(), Math::min);
+                return session;
+            })
             .exec(http(RESERVE_LABEL)
                     .post(RESERVE_PATH)
                     .body(StringBody(session -> String.format(
@@ -108,7 +118,30 @@ public class BaselineReservationSimulation extends Simulation {
                             session.getLong("applicantId"), SeedState.SLOT_ID.get())))
                     // 409(정원 마감)는 baseline의 '정상 거절'이라 실패로 세지 않는다. 그래야
                     // KO 카운트가 진짜 실패(500 데드락, 타임아웃)만 남아 실패율이 의미를 갖는다.
-                    .check(status().in(201, 409)));
+                    .check(status().in(201, 409)))
+            .exec(session -> {
+                BURST_END_EPOCH_MS.accumulateAndGet(System.currentTimeMillis(), Math::max);
+                BURST_COMPLETED.incrementAndGet();
+                return session;
+            });
+
+    @Override
+    public void before() {
+        BURST_START_EPOCH_MS.set(Long.MAX_VALUE);
+        BURST_END_EPOCH_MS.set(Long.MIN_VALUE);
+        BURST_COMPLETED.set(0);
+    }
+
+    @Override
+    public void after() {
+        int completed = BURST_COMPLETED.get();
+        long start = BURST_START_EPOCH_MS.get();
+        long end = BURST_END_EPOCH_MS.get();
+        System.out.printf(
+                "BENCHMARK_BURST_METRICS={\"requests\":%d,\"startEpochMs\":%d,"
+                        + "\"endEpochMs\":%d,\"wallMs\":%d}%n",
+                completed, start, end, end - start);
+    }
 
     {
         setUp(

@@ -17,7 +17,7 @@
 | ④ | `step2/pessimistic-lock` | ✅ 완료 (2026-07-18, PR #4) | [STEP2-PESSIMISTIC-LOCK.md](STEP2-PESSIMISTIC-LOCK.md) |
 | ⑤ | `step2/optimistic-lock` | ✅ 완료 (2026-07-18, 백오프 실측 2026-07-19) | [STEP2-OPTIMISTIC-LOCK.md](STEP2-OPTIMISTIC-LOCK.md) · `V3` |
 | ⑥ | ~~`step2/distributed-lock`~~ | ❌ **생략** (2026-09-04, [근거](#skip-distributed-lock)) | — |
-| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04, 설정 통제 재측정 2026-09-24) | [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) · [`raw-runs.csv`](benchmark/raw-runs.csv) · [실행 환경](benchmark/2026-09-24-controlled-run.md) |
+| ⑦ | `step2/benchmark` | ✅ 완료 (2026-09-04, 방법론 v2 균형 재측정 2026-09-25) | [종합](STEP2-DEFENSE-BENCHMARK.md) · [v2 정본](benchmark/raw-runs-v2.csv) · [성공 매니페스트](benchmark/campaigns/2026-09-25-williams-v2-01/manifest.md) · [환경 A](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-a.json) / [B](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-b.json) · `methodology-v1-fixed-order` [원시 자료](benchmark/raw-runs.csv) / [실행 기록](benchmark/2026-09-24-controlled-run.md) |
 | ⑧ | `step3/tradeoff-analysis` | ✅ 완료 (2026-09-23) | [README 트레이드오프 분석](../README.md#트레이드오프-분석) |
 
 ## Context
@@ -143,10 +143,11 @@
 - 위 고정 포맷 3문장 필수. 이기는 조건(경합이 높고 임계 구역이 다단계라 재시도 비용이 큰 경우)을
   명시하되, 이 도메인의 임계 구역은 UPDATE 한 방이라 그 조건이 성립하지 않음을 적는다
 - **예비 결과(2026-07-18):** 오버부킹 0 달성. 당시 7쌍 측정에서는 저경합에서 ②보다 느렸지만,
-  이 성능 결과는 풀·로그를 통제한 2026-09-24 재측정에서 재현되지 않았다. 최종적으로는 성능
-  열세가 아니라, 현재 불변식이 조건부 DML 한 문장으로 표현돼 명시적 잠금 구간이 필요 없다는
-  이유로 **채택하지 않는다.** [예비 측정](STEP2-PESSIMISTIC-LOCK.md) ·
-  [통제 종합](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)
+  `methodology-v1-fixed-order`에서는 재현되지 않았고 방법론 v2의 낮은 경합에서는 다시 관측됐다.
+  반대로 극단 경합에서는 ④의 응답값이 더 작았다. 최종적으로는 보편적 성능 열세가 아니라, 현재
+  불변식이 조건부 DML 한 문장으로 표현돼 명시적 잠금 구간이 필요 없다는 이유로 **채택하지 않는다.**
+  [예비 측정](STEP2-PESSIMISTIC-LOCK.md) ·
+  [v2 종합](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)
 
 **⑤ `step2/optimistic-lock`** — `@Version` + 재시도(지수 백오프)
 - `V3__add_version_to_slot.sql`: `interview_slot.version` 추가
@@ -160,9 +161,10 @@
   [STEP2-OPTIMISTIC-LOCK.md](STEP2-OPTIMISTIC-LOCK.md)
 - ⚠️ **위 세 번째 줄의 전제는 실측으로 틀린 것으로 판명됐다.** "낮은 경합 지점에서 ⑤가 유리할
   것"이라고 적었지만, 낙관적 락의 경합은 요청 수가 아니라 **같은 행에 성공적으로 쓰는 횟수**로
-  정해진다. 그래서 `cap=100 cont=120`("낮은 경합")에서 버전 충돌 440회·503 실패 70건이 났고,
-  `cap=1 cont=200`("극단 경합")에서는 충돌이 **9회**뿐이었다 — ⑤에게는 두 지점의 의미가
-  **정반대**다. 아래 ⑦ 항목의 경고를 함께 볼 것
+  정해진다. 구현 당시 예비 실행에서 `cap=100 cont=120`은 버전 충돌 440회·503 실패 70건,
+  `cap=1 cont=200`은 충돌 9회였다. 현재 v2에서도 Phase A/B의 충돌 중앙값은 낮은 경합
+  568/738회, 극단 경합 10/12.5회로 방향이 재현됐다 — ⑤에게는 두 지점의 의미가 **정반대**다.
+  아래 ⑦ 항목의 경고를 함께 볼 것
 - **백오프 방식도 실측으로 골랐다(2026-07-19 추가).** "지수 백오프"라고만 적혀 있던 항목을
   고정·지수·지수+지터 **세 방식으로 구현해 같은 조건에서 비교**했다. 지터 없는 방식은 요청의
   24~75%를 재시도 상한 안에 처리하지 못했고, 지수+지터만 100%를 처리하면서 충돌도 가장
@@ -184,7 +186,7 @@
 `UPDATE ... SET remaining = remaining - 1 WHERE id = ? AND remaining > 0` **한 문장**이고,
 원자성의 근거는 InnoDB 행 락이다. 조율할 대상이 전부 한 DB 안에 있으므로 DB 밖의 뮤텍스가 더 지킬
 것이 없다. ④(비관적)·⑤(낙관적)도 같은 DB 안에서 각각 "기다리게 해서"·"다시 하게 해서" 같은 정합성에
-도달했다. 통제 측정에서 ④가 같거나 빠른 구간도 있었지만, DB 밖 뮤텍스가 지킬 새로운 불변식은
+도달했다. v2 측정에서 ④가 더 작은 응답값을 보인 구간도 있었지만, DB 밖 뮤텍스가 지킬 새로운 불변식은
 생기지 않는다.
 
 **2. "다중 인스턴스"는 명분이 아니다.** [실험 통제 원칙](#lock-experiment-control)에 이미 적어 둔
@@ -227,15 +229,18 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
   - ④에서 이미 `-Dstrategy`(경로 선택)와 **요청 이름 이름표**(`reserve [전략 cap=N cont=M]`)를
     넣어 뒀다. 이름표는 `js/stats.js`에 실리므로 리포트를 기계적으로 파싱해 표를 만들 수 있다 —
     이게 없으면 쌓인 리포트가 어느 전략의 측정인지 사후에 알 수 없다(④에서 실제로 겪은 문제)
-- 지표: TPS, 평균/최대 응답시간, 실패율, 데이터 정합성(오버부킹·중복 수)
+- 지표: 버스트 TPS, 실행별 평균/p95 응답시간, 실패율, 데이터 정합성(오버부킹·중복 수)
 - **②의 거절 경로 최적화 여지 확인 필요.** ④에서 쿼리 수를 재보니 거절 경로가 ② 3개 / ④ 2개로
   ②가 더 든다 — 만석과 없는 슬롯을 구분하려는 `existsById` 때문이다. 방어가 아니라 404/409 구분용
   조회라 제거 가능하며, `capacity=1`처럼 거절이 지배적인 지점의 수치를 왜곡할 수 있다.
   ②를 고치면 이미 머지된 브랜치의 측정 기준이 바뀌므로 **④에서는 손대지 않았다**([근거](STEP2-PESSIMISTIC-LOCK.md))
-  - **통제 재측정 결과(2026-09-24):** 극단 경합은 ④가 5/5 빨랐지만, 낮은 경합도 ④ 3승·② 1승·
-    동률 1이었다(중앙값은 둘 다 136ms). 따라서 “경로에 따라 우위가 뒤집힌다”던 기본 프로필 결과는
-    재현되지 않았다([6절](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)). `existsById`는 극단
-    결과와 방향이 맞는 가설일 뿐이며, 인과 확인은 별도 A/B 후속 과제로 남긴다
+  - **방법론 v2 재측정 결과(2026-09-25):** 낮은 경합 평균 응답 중앙값은 Phase A/B에서
+    ② 125.5/126ms, ④ 152/140ms였고, Phase 내부 라운드 비교는 두 Phase 모두 ②가 9/10
+    앞섰다. 극단 경합은 ② 117/122.5ms, ④ 88.5/97.5ms였고 ④가 Phase A 10/10,
+    Phase B 9/10 앞섰다([4절](STEP2-DEFENSE-BENCHMARK.md#conditional-vs-pessimistic)). 다만 같은
+    라운드의 두 처리도 Williams 직렬 위치와 실행 시점이 다르므로 차이를 락 하나의 인과 효과로
+    단정하지 않는다. `existsById`는 극단 결과와 방향이 맞는 가설일 뿐이며, 인과 확인은 별도 A/B
+    후속 과제로 남긴다
 - **경합 강도 축 (2026-07-17 추가, [실험 통제 원칙](#lock-experiment-control)의 실측 근거).**
   시나리오는 그대로 두고 파라미터만 바꿔 **모든 전략을 두 지점에서** 측정한다. ④⑤가 서로 갈라지는
   유일한 실측 근거이므로 생략하지 않는다.
@@ -247,15 +252,21 @@ TTL보다 길어질 때 연장), 그리고 Redlock만으로는 상호 배제를 
     `cap=100`은 성공적 쓰기가 100번이라 낙관적 락에게 **최악**이고, `cap=1`은 쓰기가 한 번뿐이라
     **가장 쉽다.** 2차원 표에 이 주석을 반드시 함께 실을 것 — 없으면 ⑤ 행만 의미가 뒤집힌 채로
     읽힌다
-  - ⚠️ **⑤는 재시도 상한 설정에 따라 결과가 달라지므로 상한을 표에 명시할 것.** 통제 재측정에서
-    상한 5는 중앙값 13/100석만 채우고 107건이 503, 상한 20은 100석을 채우지만
-    평균 응답 중앙값 520ms·TPS 137.6이었다. 상한을 적지 않은 ⑤ 측정치는 해석이 불가능하다
+  - ⚠️ **⑤는 재시도 상한 설정에 따라 결과가 달라지므로 상한과 Phase를 표에 명시할 것.**
+    Phase A의 상한 5는 낮은 경합 확정 예약 중앙값 12, 소진 108건(103–110), 버전 충돌
+    568회(562–572)였다. Phase B의 상한 20은 100석을 채우지만 평균 응답 중앙값
+    483ms(461–531)·버스트 TPS 139.5(131.3–149.1), 버전 충돌 738회(728–778)였다.
+    두 상한은 서로 다른 앱 기동의 민감도 분석이며, 반드시 같은 Phase의 대조 전략과 비교한다
 - 산출물: [STEP2-DEFENSE-BENCHMARK.md](STEP2-DEFENSE-BENCHMARK.md) — (전략 × 경합 수준) 2차원 표
-  + Mermaid 그래프 + [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)(통제 60행) +
-  [실행 환경·해시](benchmark/2026-09-24-controlled-run.md). 이전 기본 프로필 60행은
+  + Mermaid 그래프 + [`benchmark/raw-runs-v2.csv`](benchmark/raw-runs-v2.csv)(검증된 측정 200행) +
+  [성공 캠페인 매니페스트](benchmark/campaigns/2026-09-25-williams-v2-01/manifest.md) +
+  [Phase A](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-a.json) ·
+  [Phase B](benchmark/campaigns/2026-09-25-williams-v2-01/environment-phase-b.json) 환경 스냅샷.
+  2026-09-24의 고정 순서 60행은 변경 불가한 `methodology-v1-fixed-order`
+  [`benchmark/raw-runs.csv`](benchmark/raw-runs.csv)와
+  [실행 기록](benchmark/2026-09-24-controlled-run.md)으로, 이전 기본 프로필 60행은
   [`benchmark/archive`](benchmark/archive/2026-09-04-manifest.md)에 보존한다
-  - 측정 자동화: [`scripts/benchmark.sh`](../scripts/benchmark.sh)(라운드 단위 인터리브 스윕) ·
-    [`scripts/parse_gatling_report.py`](../scripts/parse_gatling_report.py)(이름표로 리포트 식별) ·
+  - 측정 자동화: [`scripts/benchmark_capacity.py`](../scripts/benchmark_capacity.py)(Williams 계획·환경·Gatling·DB·CSV 검증 통합) ·
     [`scripts/summarize_benchmark.py`](../scripts/summarize_benchmark.py)(중앙값·범위·짝비교 표)
 
 ### 3단계. 트레이드오프 분석 및 최종 선택

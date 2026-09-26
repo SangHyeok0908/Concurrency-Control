@@ -1,61 +1,117 @@
+#!/usr/bin/env python3
 import csv
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SUMMARIZER = ROOT / "scripts" / "summarize_benchmark.py"
-FIELDS = [
-    "ts", "phase", "round", "strategy", "optimistic_max_attempts", "contention",
-    "capacity", "contenders", "slot_id", "requests", "ok", "ko", "mean_ms",
-    "p95_ms", "max_ms", "tps", "remaining", "confirmed", "overbooking",
-    "duplicates", "retry_succeeded", "retry_exhausted", "version_conflicts",
-    "deadlocks", "mean_attempts",
-]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import benchmark_capacity as benchmark  # noqa: E402
 
 
-class SummarizeBenchmarkTest(unittest.TestCase):
+SUMMARIZER = SCRIPTS / "summarize_benchmark.py"
+CHECKED_IN_CAMPAIGN = ROOT / "docs" / "benchmark" / "raw-runs-v2.csv"
 
-    def test_counts_an_equal_pair_as_a_tie(self):
-        base = dict.fromkeys(FIELDS, "0")
-        base.update({
-            "phase": "a",
-            "round": "1",
-            "optimistic_max_attempts": "5",
-            "contention": "low",
-            "capacity": "100",
-            "contenders": "120",
-            "requests": "120",
-            "ok": "120",
-            "mean_ms": "136",
-            "p95_ms": "190",
-            "max_ms": "200",
-            "tps": "600.0",
-            "confirmed": "100",
-        })
-        rows = []
-        for strategy in ("conditional", "pessimistic"):
-            row = dict(base)
-            row["strategy"] = strategy
-            rows.append(row)
 
-        with tempfile.NamedTemporaryFile("w", newline="", suffix=".csv") as handle:
-            writer = csv.DictWriter(handle, fieldnames=FIELDS)
-            writer.writeheader()
-            writer.writerows(rows)
-            handle.flush()
-            result = subprocess.run(
-                [sys.executable, str(SUMMARIZER), handle.name],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+def run_summary(path, *arguments):
+    return subprocess.run(
+        [sys.executable, str(SUMMARIZER), str(path), *arguments],
+        cwd=str(ROOT),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def write_rows(path, rows):
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=benchmark.CSV_FIELDS,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+class BenchmarkSummaryTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.temporary = Path(directory.name)
+
+    def summarize_temp(self, rows):
+        path = self.temporary / "campaign.csv"
+        write_rows(path, rows)
+        return run_summary(path)
+
+    def test_checked_in_campaign_is_complete_and_renders_phase_tables(self):
+        result = run_summary(CHECKED_IN_CAMPAIGN)
 
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("② 0승 / ④ 0승 / 동률 1", result.stdout)
+        self.assertIn("Phase A", result.stdout)
+        self.assertIn("Phase B", result.stdout)
+        self.assertIn("② vs ④", result.stdout)
+        self.assertIn("⑤ 낙관적 락", result.stdout)
+        self.assertIn("| n |", result.stdout)
+        self.assertIn("1688.05 <sub>(1398.6–1851.9)</sub>", result.stdout)
+        self.assertIn("563.4 <sub>(526.3–594.1)</sub>", result.stdout)
+        self.assertNotIn("000000000000", result.stdout)
+
+    def test_incomplete_campaign_is_rejected_without_partial_summary(self):
+        rows = benchmark.read_rows(CHECKED_IN_CAMPAIGN)[:-1]
+
+        result = self.summarize_temp(rows)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("Phase A", result.stdout)
+
+    def test_equal_range_and_conditional_pessimistic_positions_are_rendered(self):
+        rows = benchmark.read_rows(CHECKED_IN_CAMPAIGN)
+        conditional = None
+        pessimistic = None
+        for row in rows:
+            if (row["phase"], row["strategy"], row["contention"]) == (
+                "a", "baseline", "low",
+            ):
+                row["mean_ms"] = "77"
+            if (
+                row["phase"] == "a"
+                and row["contention"] == "low"
+                and row["measured_round"] == "1"
+            ):
+                if row["strategy"] == "conditional":
+                    row["mean_ms"] = "111"
+                    conditional = row
+                elif row["strategy"] == "pessimistic":
+                    row["mean_ms"] = "222"
+                    pessimistic = row
+
+        result = self.summarize_temp(rows)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("77 <sub>(77–77)</sub>", result.stdout)
+        self.assertIsNotNone(conditional)
+        self.assertIsNotNone(pessimistic)
+        expected_pair = "| A | 낮음 | 1 | %s | 111 | %s | 222 | -111 |" % (
+            conditional["position_in_round"],
+            pessimistic["position_in_round"],
+        )
+        self.assertIn(expected_pair, result.stdout)
+
+    def test_legacy_mode_option_is_removed(self):
+        result = run_summary(CHECKED_IN_CAMPAIGN, "--legacy-v1")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("", result.stdout)
+        self.assertIn("unrecognized arguments", result.stderr)
 
 
 if __name__ == "__main__":

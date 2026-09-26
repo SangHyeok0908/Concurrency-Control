@@ -1,0 +1,1 @@
+{"activeProfiles":["benchmark"],"backoffBaseMillis":10,"backoffMaxMillis":200,"backoffPolicy":"exponential-jitter","bindLogLevel":"OFF","formatSql":false,"maximumPoolSize":100,"minimumIdle":100,"optimisticMaxAttempts":5,"rootLogLevel":"OFF","showSql":false,"sqlLogLevel":"OFF","totalConnections":100,"useSqlComments":false}
