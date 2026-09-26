@@ -26,12 +26,14 @@
 - **멱등성 키**: 이 도메인에서는 `(applicant, slot)` 자연 키가 요청의 정체성을 이미 고정하고 UNIQUE가 이를 강제한다. 결제처럼 같은 내용의 요청이 서로 다른 연산일 수 있거나 동일 슬롯 복수 예약을 허용할 때 다시 검토한다. [판단 근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-idempotency-key)
 - **분산 락**: 임계 구역은 단일 MySQL 슬롯 행의 UPDATE로 끝난다. 애플리케이션 인스턴스를 늘리는 것만으로는 분산 락의 근거가 되지 않는다. 외부 결제·다른 저장소·정확히 한 번 처리할 알림처럼 DB 밖 자원을 함께 조율할 때 다시 검토한다. [판단 근거](docs/STEP2-3-BRANCH-STRATEGY.md#skip-distributed-lock)
 
+조건부 UPDATE도 InnoDB 행 잠금을 사용하며 예약 INSERT와 트랜잭션 커밋까지 유지한다. 주변 SQL과 결합하면 데드락이 가능하다. v2 200회에서 KO 0은 해당 시나리오의 관측값이다.
+
 ## 단계별 결과 요약
 
 | 단계 | 결과 | 근거 |
 |---|---|---|
 | 1. baseline 재현 | 락 없는 경로에서 오버부킹·lost update·데드락을 재현 | [서비스 계층](docs/STEP1-BASELINE-OVERBOOKING.md) · [HTTP 부하](docs/STEP1-GATLING-LOADTEST.md) |
-| 2. 방어 구현·비교 | UNIQUE, 조건부 UPDATE, 비관적 락, 낙관적 락을 구현하고 정원 경쟁 60회·동일 요청 25회 측정 | [벤치마크](docs/STEP2-DEFENSE-BENCHMARK.md) |
+| 2. 방어 구현·비교 | UNIQUE, 조건부 UPDATE, 비관적 락, 낙관적 락을 구현하고 정원 경쟁 v2 200회·동일 요청 25회 측정 | [벤치마크](docs/STEP2-DEFENSE-BENCHMARK.md) |
 | 3. 최종 선택 | `UNIQUE` + 조건부 UPDATE를 선택. 성능 순위가 아니라 현재 불변식을 가장 작게 표현한다는 이유 | [README 분석](README.md#트레이드오프와-최종-선택) |
 
 방어 하나 = 브랜치 하나 = PR 하나라는 이력도 실험의 일부다. 상태와 세부 산출물은 [브랜치 전략의 진행 표](docs/STEP2-3-BRANCH-STRATEGY.md)를 따른다.

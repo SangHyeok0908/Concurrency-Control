@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 동일 applicant+slot HTTP 재요청을 실제로 발생시키고 HTTP 상태와 DB 불변식을 함께 기록한다.
-# 기존 benchmark.sh의 서로 다른 지원자 정원 경쟁과 목적·CSV를 섞지 않는다.
+# benchmark_capacity.py의 서로 다른 지원자 정원 경쟁과 목적·CSV를 섞지 않는다.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."

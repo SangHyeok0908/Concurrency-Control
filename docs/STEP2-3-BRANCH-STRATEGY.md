@@ -12,7 +12,7 @@
 | ④ | `step2/pessimistic-lock` | ✅ 완료 (2026-07-18, PR #4) | [비관적 락](STEP2-PESSIMISTIC-LOCK.md) |
 | ⑤ | `step2/optimistic-lock` | ✅ 완료 (2026-07-18, 백오프 실측 2026-07-19) | [낙관적 락](STEP2-OPTIMISTIC-LOCK.md) · `V3` |
 | ⑥ | ~~`step2/distributed-lock`~~ | ❌ **생략** (2026-09-04, [근거](#skip-distributed-lock)) | — |
-| ⑦ | `step2/benchmark` | ✅ 완료 (통제 재측정 2026-09-24, 동일 요청 검증 2026-09-25) | [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md) · [정원 경쟁 60행](benchmark/raw-runs.csv) · [동일 요청 25행](benchmark/duplicate-runs.csv) |
+| ⑦ | `step2/benchmark` | ✅ 완료 (방법론 v2·동일 요청 검증 2026-09-25, v2 PR #7) | [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md) · [정원 경쟁 v2 200행](benchmark/raw-runs-v2.csv) · [성공 매니페스트](benchmark/campaigns/2026-09-25-williams-v2-01/manifest.md) · [동일 요청 25행](benchmark/duplicate-runs.csv) |
 | ⑧ | `step3/tradeoff-analysis` | ✅ 완료 (2026-09-23) | [README 트레이드오프와 최종 선택](../README.md#트레이드오프와-최종-선택) |
 
 ## 실험의 기준
@@ -67,10 +67,14 @@ API 응답 계약의 문제다.
 
 ## 현재 결과와 후속 범위
 
-②·④·⑤는 모두 오버부킹 0을 달성했다. 통제 재측정에서 ②와 ④의 낮은 경합 중앙값은 모두 136ms였고,
-극단 경합은 ④가 5/5 빨랐다. ⑤는 상한 5에서 중앙값 13석·503 응답 107건, 상한 20에서 평균 응답 중앙값
-520ms·TPS 137.6으로, 상한에 따라 가용성 또는 재시도 비용을 지불했다. 최종 선택과 원시 실행값은
-[방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md), 최종 해석은 [README 트레이드오프와 최종 선택](../README.md#트레이드오프와-최종-선택)을 정본으로 한다.
+②·④·⑤는 v2 두 Phase에서 오버부킹 0을 달성했다. 낮은 경합 평균 응답 중앙값은 Phase A/B에서
+② 125.5/126ms, ④ 152/140ms였고, 극단 경합은 ② 117/122.5ms, ④ 88.5/97.5ms였다.
+⑤는 Phase A의 상한 5에서 확정 예약 중앙값 12·소진 108건, Phase B의 상한 20에서 평균 응답
+중앙값 483ms·버스트 TPS 139.5였다. 상한 비교는 서로 다른 앱 기동의 민감도 분석이며,
+각 상한은 같은 Phase의 대조 전략과 비교한다. 이전 고정 순서 60행은 역사 자료로 보존한다.
+동일 요청 25행은 별도 검증이며 두 workload의 수치를 합치지 않는다. 최신 수치와 원시 실행값은
+[방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md), 최종 해석은
+[README 트레이드오프와 최종 선택](../README.md#트레이드오프와-최종-선택)을 정본으로 한다.
 
 후속 범위는 현재 한 행 산술 가드를 넘어서는 다중 행 불변식, 외부 자원, 취소·재예약 같은 도메인
 확장이다. 그 변화가 실제로 생길 때 해당 도구의 전제와 측정을 새로 정의한다.

@@ -9,7 +9,8 @@
 
 ## 문서 목록
 
-- roadmap: [벤치마크 방법론 v2 설계](roadmap/2026-09-24-benchmark-order-and-throughput-design.md) · [구현 계획](roadmap/2026-09-24-benchmark-order-and-throughput.md)
+- archive: [벤치마크 도구 단순화 설계](archive/2026-09-25-benchmark-tooling-simplification-design.md) · [구현 계획](archive/2026-09-25-benchmark-tooling-simplification.md)
+- 방법론 v2의 이전 계획은 구현과 도구 단순화로 대체되어 삭제했다. 현재 정본은 공개 벤치마크 문서다.
 - archive: [동일 요청 검증 설계](archive/2026-09-25-duplicate-request-benchmark-design.md) · [구현 계획](archive/2026-09-25-duplicate-request-benchmark.md)
 
 공개 벤치마크의 기준 문서는 [STEP2-DEFENSE-BENCHMARK.md](../STEP2-DEFENSE-BENCHMARK.md)다.

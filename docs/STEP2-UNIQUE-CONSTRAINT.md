@@ -104,7 +104,7 @@ baseline 오버부킹 프로브는 "간헐적으로만" 터져 관찰만 했지�
 995건을 500으로 반환했다. 따라서 **DB 중복 방어**와 **재요청의 HTTP 의미**는 별도 계약이다.
 
 원시 25행과 환경·해시는 [동일 요청 실행 기록](benchmark/2026-09-25-duplicate-request-run.md),
-전체 전략 해석은 [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md#3-1-1-동일-요청-25회--db-안전성과-http-의미)에 있다.
+전체 전략 해석은 [방어 전략 벤치마크](STEP2-DEFENSE-BENCHMARK.md#3-2-동일-요청-25회--db-안전성과-http-의미)에 있다.
 
 > **운영 메모.** V2는 append-only 마이그레이션이라, 이미 중복 (지원자, 슬롯) 행이 있는 DB에서는
 > `ALTER TABLE ... ADD UNIQUE`가 실패한다. 실제로 step1 부하 테스트 잔여 데이터가 남은 로컬 DB에서
