@@ -3,7 +3,7 @@
 > 이 문서는 **방어 장치가 없는 1단계 코드**가 동시성 버그를 실제로 일으킨다는 것을 통합 테스트로
 > 재현한 기록이다. 핵심은 "터진다"가 아니라 **"간헐적으로 터진다"** 이며, 그 과정에서 함께 드러난
 > **데드락**이라는 두 번째 실패 모드까지 관찰한다. 스키마 배경은 [ERD.md](ERD.md), 전체 계획은
-> [PROJECT_PLAN의 단계별 결과 요약](../PROJECT_PLAN.md#단계별-결과-요약)을 정본으로 한다.
+> [PROJECT_PLAN의 단계별 실험 설계](../PROJECT_PLAN.md#단계별-실험-설계)를 정본으로 한다.
 
 관련 코드: [`BaselineOverbookingProbeTest`](../src/test/java/com/interview/reservation/concurrency/BaselineOverbookingProbeTest.java) ·
 [`ReservationService.reserve()`](../src/main/java/com/interview/reservation/service/ReservationService.java) ·

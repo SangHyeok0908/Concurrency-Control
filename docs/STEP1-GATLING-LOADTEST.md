@@ -3,7 +3,7 @@
 > 서비스-계층 프로브([STEP1-BASELINE-OVERBOOKING.md](STEP1-BASELINE-OVERBOOKING.md))가 `reserve()`를
 > 직접 호출해 오버부킹을 재현했다면, 이 문서는 **실제 HTTP 엔드포인트 `POST /api/reservations`에
 > Gatling으로 부하를 걸어** 같은 버그를 재현하고, 동시에 2단계 before/after 비교의 기준선이 될
-> **처리량·응답시간·실패율**을 측정한 기록이다. 전체 계획은 [PROJECT_PLAN의 단계별 결과 요약](../PROJECT_PLAN.md#단계별-결과-요약)이 정본이다.
+> **처리량·응답시간·실패율**을 측정한 기록이다. 전체 계획은 [PROJECT_PLAN의 단계별 실험 설계](../PROJECT_PLAN.md#단계별-실험-설계)가 정본이다.
 
 관련 코드: [`BaselineReservationSimulation`](../src/gatling/java/com/interview/reservation/loadtest/BaselineReservationSimulation.java) ·
 [`SeedState`](../src/gatling/java/com/interview/reservation/loadtest/SeedState.java) ·
